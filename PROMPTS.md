@@ -4,7 +4,74 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
-## Milestone 9 — Show who was right (✓/✗, outcome, point swing)
+## Milestone 10 — Reliable pick feedback + honest per-user state + clearer leaderboard
+
+```
+Fix three related problems in the Frager prediction/pick UX. Milestone 10. Frontend-
+focused; no backend/API changes needed. Context: a user made a pick that APPEARED to
+work but was never saved (a pick request timed out on the free-tier backend), and the
+only signal was a small red message at the bottom of the section, far from the pick
+form. Also the leaderboard's "Points" and "Correct" columns are easy to misread
+(e.g. reading points 2 with 1/1 as "2/2").
+
+PROBLEM 1 — a failed pick must never look saved.
+In frontend/src/App.jsx, LeagueView.handlePick currently does `setError(err.message)`
+which renders the message at the bottom of the whole section. Change so pick errors
+are shown INLINE at the prediction card (right under that prediction's pick form),
+not in the page-level error paragraph.
+  a. Add per-prediction error state, e.g. `pickErrors` keyed by predictionId (mirror
+     the existing `saving` map shape). On failure set pickErrors[id] = message; on a
+     new attempt clear it. Render it right under the pick form for that prediction.
+  b. On FAILURE: keep the form values (do NOT clear the stake), and word it clearly,
+     e.g. "Your pick was NOT saved: <reason>. Please try again."
+  c. On SUCCESS: show a brief, unmistakable confirmation near that card, e.g.
+     "✓ Pick saved: NO (5 pts)" using a per-prediction "saved" state that clears
+     after a few seconds (setTimeout) or on next change. It must be obvious the pick
+     registered.
+
+PROBLEM 2 — auto-retry a pick on a transient/network error (cold start).
+  d. Wrap the pick POST in the same retry approach used for mount GETs, but ONLY for
+     genuine network errors (the NETWORK_ERROR message), NOT for HTTP errors like 409
+     (already resolved) or 400/422 (bad input) — those must fail immediately with the
+     inline message. Retry e.g. up to 2 extra times with a short backoff, showing
+     "Saving…" on the button throughout.
+  e. Do NOT auto-retry on 409 (prediction already settled): instead show a clear
+     inline message like "This prediction was already resolved — your pick wasn't
+     saved." (This is the exact scenario that can bite when someone resolves while
+     another user is picking.)
+  f. Keep the existing "Saving…" disabled-button behavior; ensure retries don't
+     re-enable it mid-retry.
+
+PROBLEM 3 — make the user's OWN pick state obvious without expanding.
+  g. In each prediction card (collapsed view), if the current user has a pick on that
+     prediction, show a clear line like "You picked: NO (5 pts)". To know this, the
+     detail endpoint already returns picks with user_id when visible; but for OPEN
+     predictions the caller can only see picks if they have picked — which is exactly
+     the case here (your own pick reveals the list). Use that: when details[id] is
+     loaded and picks_visible, find pick.user_id === userId and show the line. If the
+     details aren't loaded yet, it's fine to omit until expanded — but prefer to load
+     detail for predictions so the marker can show. Keep it lightweight.
+  h. This line must update after a successful pick (reuse the existing loadDetail call
+     already made after a successful pick).
+
+PROBLEM 4 — leaderboard clarity.
+  i. Relabel the leaderboard headers so they can't be misread: keep "Member" and
+     "Points", and change "Correct" to "Record" with values shown as "1/1"
+     (correct/total), and "Accuracy" stays as a %. Consider a title/hint on the
+     Record column like "Record (correct / total picks)". Do not change the data.
+  j. Keep sorting/behavior identical.
+
+Keep everything else working (counts/stakes line, resolve buttons, reveal-after-pick,
+M9 result banner + tick/cross, friendly errors, retry-on-mount).
+
+Report back: full changed files, npm run build result, and a short before/after of
+how a failed pick and a successful pick each look now. Do not start long-running
+servers.
+```
+
+---
+
+## Milestone 9 — Show who was right (DONE)
 
 ```
 Make it visually obvious who was right after a prediction is resolved. Milestone 9.

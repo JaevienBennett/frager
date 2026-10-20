@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const TOKEN_KEY = 'frager_token'
@@ -24,7 +24,9 @@ async function fetchJson(url, options = {}) {
       const body = await res.json()
       if (body && typeof body.detail === 'string') detail = body.detail
     } catch {}
-    throw new Error(detail)
+    const error = new Error(detail)
+    error.status = res.status
+    throw error
   }
   return res.json()
 }
@@ -50,6 +52,19 @@ function parseStake(raw) {
     throw new Error('Stake must be a whole number of points (0 or more).')
   }
   return Math.min(Number(trimmed), 1000000)
+}
+
+function pickErrorMessage(err) {
+  if (err.status === 409) {
+    return "This prediction was already resolved — your pick wasn't saved."
+  }
+  const reason = err.message
+  return `Your pick was NOT saved: ${reason}${/[.!?]$/.test(reason) ? '' : '.'} Please try again.`
+}
+
+function findMyPick(detail, userId) {
+  if (!detail || !detail.picks_visible) return null
+  return detail.picks.find((pk) => pk.user_id === userId) || null
 }
 
 export default function App() {
@@ -307,6 +322,10 @@ function LeagueView({ token, userId, league, onBack }) {
   const [error, setError] = useState('')
   const [picks, setPicks] = useState({})
   const [saving, setSaving] = useState({})
+  const [pickErrors, setPickErrors] = useState({})
+  const [pickSaved, setPickSaved] = useState({})
+  const savedTimers = useRef({})
+  const detailRequested = useRef({})
 
   const auth = { Authorization: `Bearer ${token}` }
 
@@ -364,11 +383,25 @@ function LeagueView({ token, userId, league, onBack }) {
     )
   }, [loadPredictions, loadLeaderboard])
 
+  useEffect(() => {
+    if (!loaded) return
+    for (const p of predictions) {
+      if (!details[p.id] && !detailRequested.current[p.id]) {
+        detailRequested.current[p.id] = true
+        loadDetail(p.id)
+      }
+    }
+  }, [loaded, predictions, details, loadDetail])
+
   function updatePickForm(predictionId, field, value) {
     setPicks((prev) => ({
       ...prev,
       [predictionId]: { side: 'yes', stake: '', ...prev[predictionId], [field]: value },
     }))
+    if (pickSaved[predictionId]) {
+      clearTimeout(savedTimers.current[predictionId])
+      setPickSaved((prev) => ({ ...prev, [predictionId]: null }))
+    }
   }
 
   async function handlePost(e) {
@@ -395,20 +428,40 @@ function LeagueView({ token, userId, league, onBack }) {
     try {
       stake = parseStake(form.stake)
     } catch (err) {
-      setError(err.message)
+      setPickErrors((prev) => ({
+        ...prev,
+        [predictionId]: pickErrorMessage(err),
+      }))
       return
     }
+    setPickErrors((prev) => ({ ...prev, [predictionId]: null }))
+    setPickSaved((prev) => ({ ...prev, [predictionId]: null }))
+    clearTimeout(savedTimers.current[predictionId])
     setSaving((prev) => ({ ...prev, [predictionId]: true }))
     try {
-      await fetchJson(`${API}/api/predictions/${predictionId}/pick`, {
-        method: 'POST',
-        headers: { ...auth, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ side: form.side, stake }),
-      })
+      await fetchJsonWithRetry(
+        `${API}/api/predictions/${predictionId}/pick`,
+        {
+          method: 'POST',
+          headers: { ...auth, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ side: form.side, stake }),
+        },
+        3,
+      )
       setPicks((prev) => ({ ...prev, [predictionId]: { side: form.side, stake: '' } }))
+      setPickSaved((prev) => ({
+        ...prev,
+        [predictionId]: `✓ Pick saved: ${form.side.toUpperCase()} (${stake} pts)`,
+      }))
+      savedTimers.current[predictionId] = setTimeout(() => {
+        setPickSaved((prev) => ({ ...prev, [predictionId]: null }))
+      }, 4000)
       await Promise.all([loadPredictions(), loadDetail(predictionId)])
     } catch (err) {
-      setError(err.message)
+      setPickErrors((prev) => ({
+        ...prev,
+        [predictionId]: pickErrorMessage(err),
+      }))
     } finally {
       setSaving((prev) => ({ ...prev, [predictionId]: false }))
     }
@@ -498,6 +551,14 @@ function LeagueView({ token, userId, league, onBack }) {
                   {p.yes_count + p.no_count === 1 ? '' : 's'} · {p.yes_count} said Yes (
                   {p.yes_stake} pts) · {p.no_count} said No ({p.no_stake} pts)
                 </div>
+                {(() => {
+                  const mine = findMyPick(details[p.id], userId)
+                  return mine ? (
+                    <div data-testid="my-pick" style={{ marginTop: 2, fontWeight: 600 }}>
+                      You picked: {mine.side.toUpperCase()} ({mine.stake} pts)
+                    </div>
+                  ) : null
+                })()}
                 {expanded === p.id && details[p.id] && (
                   <div data-testid="picks-detail" style={{ marginTop: 6 }}>
                     {details[p.id].picks_visible ? (
@@ -574,6 +635,22 @@ function LeagueView({ token, userId, league, onBack }) {
                     </button>
                   </form>
                 )}
+                {pickErrors[p.id] && (
+                  <p
+                    data-testid="pick-error"
+                    style={{ color: 'crimson', margin: '4px 0 0', fontWeight: 600 }}
+                  >
+                    {pickErrors[p.id]}
+                  </p>
+                )}
+                {pickSaved[p.id] && (
+                  <p
+                    data-testid="pick-saved"
+                    style={{ color: '#137333', margin: '4px 0 0', fontWeight: 700 }}
+                  >
+                    {pickSaved[p.id]}
+                  </p>
+                )}
                 {p.creator_id === userId && p.status === 'open' && (
                   <div style={{ marginTop: 6, display: 'flex', gap: 8 }}>
                     <button onClick={() => handleResolve(p.id, 'yes')}>Resolve Yes</button>
@@ -590,7 +667,12 @@ function LeagueView({ token, userId, league, onBack }) {
               <tr style={{ textAlign: 'left' }}>
                 <th style={{ padding: '0 12px 4px 0' }}>Member</th>
                 <th style={{ padding: '0 12px 4px 0' }}>Points</th>
-                <th style={{ padding: '0 12px 4px 0' }}>Correct</th>
+                <th
+                  style={{ padding: '0 12px 4px 0' }}
+                  title="Record (correct / total picks)"
+                >
+                  Record
+                </th>
                 <th style={{ padding: '0 12px 4px 0' }}>Accuracy</th>
               </tr>
             </thead>
