@@ -74,6 +74,10 @@ class Prediction(Base):
     )
     question: Mapped[str] = mapped_column(String(500), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="open", nullable=False)
+    resolved_outcome: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )

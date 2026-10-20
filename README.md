@@ -18,6 +18,7 @@ frager/
 │   │   ├── routes_leagues.py /api/leagues...
 │   │   └── routes_predictions.py /api/leagues/{id}/predictions, /api/predictions/...
 │   ├── create_tables.py   create_all (runs against DATABASE_URL)
+│   ├── migrate_v4.py      ALTER predictions: resolved_outcome, resolved_at
 │   ├── requirements.txt
 │   └── .env.example
 ├── frontend/
@@ -84,3 +85,5 @@ Credentials are never hardcoded in the source.
 | GET    | `/api/leagues/{id}/predictions`   | Bearer | —           | 200 list with `yes_count`/`no_count` | 404 non-member |
 | POST   | `/api/predictions/{id}/pick`      | Bearer | `{side, stake}` | 201 new / 200 updated | 404 unknown/non-member, 422 bad side/stake |
 | GET    | `/api/predictions/{id}`           | Bearer | —           | 200 detail with picks | 404 non-member |
+| POST   | `/api/predictions/{id}/resolve`   | Bearer | `{outcome}` | 200 resolved | 404 unknown, 403 non-creator, 409 already resolved, 422 bad outcome |
+| GET    | `/api/leagues/{id}/leaderboard`   | Bearer | —           | 200 all members, points/correct/total/accuracy, sorted | 404 non-member |

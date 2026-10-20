@@ -83,7 +83,7 @@ export default function App() {
         <section>
           <p data-testid="user-status">Logged in as {user.email}</p>
           <button onClick={logout}>Log out</button>
-          <Leagues token={token} />
+          <Leagues token={token} userId={user.id} />
         </section>
       ) : (
         <form onSubmit={submit} style={{ display: 'grid', gap: 8 }}>
@@ -117,7 +117,7 @@ export default function App() {
   )
 }
 
-function Leagues({ token }) {
+function Leagues({ token, userId }) {
   const [leagues, setLeagues] = useState([])
   const [name, setName] = useState('')
   const [joinCode, setJoinCode] = useState('')
@@ -234,14 +234,20 @@ function Leagues({ token }) {
       {error && <p style={{ color: 'crimson' }}>{error}</p>}
 
       {selected && (
-        <LeagueView token={token} league={selected} onBack={() => setSelected(null)} />
+        <LeagueView
+          token={token}
+          userId={userId}
+          league={selected}
+          onBack={() => setSelected(null)}
+        />
       )}
     </section>
   )
 }
 
-function LeagueView({ token, league, onBack }) {
+function LeagueView({ token, userId, league, onBack }) {
   const [predictions, setPredictions] = useState([])
+  const [leaderboard, setLeaderboard] = useState([])
   const [question, setQuestion] = useState('')
   const [error, setError] = useState('')
   const [picks, setPicks] = useState({})
@@ -256,9 +262,17 @@ function LeagueView({ token, league, onBack }) {
     else setError((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`)
   }, [league.id, token])
 
+  const loadLeaderboard = useCallback(async () => {
+    const res = await fetch(`${API}/api/leagues/${league.id}/leaderboard`, {
+      headers: auth,
+    })
+    if (res.ok) setLeaderboard(await res.json())
+  }, [league.id, token])
+
   useEffect(() => {
     loadPredictions()
-  }, [loadPredictions])
+    loadLeaderboard()
+  }, [loadPredictions, loadLeaderboard])
 
   function updatePickForm(predictionId, field, value) {
     setPicks((prev) => ({
@@ -307,6 +321,24 @@ function LeagueView({ token, league, onBack }) {
     }
   }
 
+  async function handleResolve(predictionId, outcome) {
+    setError('')
+    try {
+      const res = await fetch(`${API}/api/predictions/${predictionId}/resolve`, {
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ outcome }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.detail || `HTTP ${res.status}`)
+      }
+      await Promise.all([loadPredictions(), loadLeaderboard()])
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   return (
     <section
       data-testid="league-view"
@@ -330,35 +362,73 @@ function LeagueView({ token, league, onBack }) {
         {predictions.map((p) => (
           <li key={p.id} data-testid="prediction-item" style={{ border: '1px solid #ccc', padding: 8 }}>
             <div>
-              <strong>{p.question}</strong> <em>({p.status})</em>
+              <strong>{p.question}</strong>{' '}
+              <em>
+                ({p.status}
+                {p.resolved_outcome ? `, resolved ${p.resolved_outcome.toUpperCase()}` : ''})
+              </em>
             </div>
             <div data-testid="prediction-counts">
               Yes: {p.yes_count} · No: {p.no_count}
             </div>
-            <form
-              onSubmit={(e) => handlePick(e, p.id)}
-              style={{ display: 'flex', gap: 8, marginTop: 6 }}
-            >
-              <select
-                value={(picks[p.id] || {}).side || 'yes'}
-                onChange={(e) => updatePickForm(p.id, 'side', e.target.value)}
+            {p.status === 'open' && (
+              <form
+                onSubmit={(e) => handlePick(e, p.id)}
+                style={{ display: 'flex', gap: 8, marginTop: 6 }}
               >
-                <option value="yes">Yes</option>
-                <option value="no">No</option>
-              </select>
-              <input
-                type="number"
-                min="0"
-                placeholder="stake"
-                value={(picks[p.id] || {}).stake ?? 0}
-                onChange={(e) => updatePickForm(p.id, 'stake', e.target.value)}
-                style={{ width: 70 }}
-              />
-              <button type="submit">Pick</button>
-            </form>
+                <select
+                  value={(picks[p.id] || {}).side || 'yes'}
+                  onChange={(e) => updatePickForm(p.id, 'side', e.target.value)}
+                >
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </select>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="stake"
+                  value={(picks[p.id] || {}).stake ?? 0}
+                  onChange={(e) => updatePickForm(p.id, 'stake', e.target.value)}
+                  style={{ width: 70 }}
+                />
+                <button type="submit">Pick</button>
+              </form>
+            )}
+            {p.creator_id === userId && p.status === 'open' && (
+              <div style={{ marginTop: 6, display: 'flex', gap: 8 }}>
+                <button onClick={() => handleResolve(p.id, 'yes')}>Resolve Yes</button>
+                <button onClick={() => handleResolve(p.id, 'no')}>Resolve No</button>
+              </div>
+            )}
           </li>
         ))}
       </ul>
+
+      <h4>Leaderboard</h4>
+      <table data-testid="leaderboard" style={{ borderCollapse: 'collapse' }}>
+        <thead>
+          <tr style={{ textAlign: 'left' }}>
+            <th style={{ padding: '0 12px 4px 0' }}>Member</th>
+            <th style={{ padding: '0 12px 4px 0' }}>Points</th>
+            <th style={{ padding: '0 12px 4px 0' }}>Correct</th>
+            <th style={{ padding: '0 12px 4px 0' }}>Accuracy</th>
+          </tr>
+        </thead>
+        <tbody>
+          {leaderboard.map((e) => (
+            <tr key={e.user_id}>
+              <td style={{ padding: '2px 12px 2px 0' }}>{e.email}</td>
+              <td style={{ padding: '2px 12px 2px 0' }}>{e.points}</td>
+              <td style={{ padding: '2px 12px 2px 0' }}>
+                {e.correct}/{e.total}
+              </td>
+              <td style={{ padding: '2px 12px 2px 0' }}>
+                {(e.accuracy * 100).toFixed(0)}%
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
       {error && <p style={{ color: 'crimson' }}>{error}</p>}
     </section>

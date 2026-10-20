@@ -4,7 +4,70 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
-## Milestone 3 — Predictions (post yes/no, pick a side, optional points)
+## Milestone 4 — Resolve + payout + leaderboard
+
+```
+Add resolution and a league leaderboard to Frager. This is Milestone 4 — the payoff
+milestone. Auth (M1), leagues (M2), and predictions/picks (M3) exist. Reuse
+get_current_user, get_db, membership helpers, and the existing routers/patterns.
+
+Product rules (locked):
+- Only the prediction's CREATOR may resolve it. Anyone else gets 403.
+- A prediction can be resolved ONCE. Resolving an already-settled prediction is 409.
+- Scoring is stake-based and simple:
+    A pick on the WINNING side earns +stake points.
+    A pick on the losing side earns -stake points.
+    Picks with stake 0 just don't move the needle (still count as correct/incorrect
+    for accuracy).
+- The outcome is one of "yes" or "no".
+- The leaderboard must be COMPUTED FROM settled picks, not stored as a running
+  counter. Never keep a mutable points column that can drift — derive it.
+
+Backend (FastAPI):
+1. Prediction already has a status column ("open"). Use these statuses:
+   "open" -> "resolved". Add a resolved_outcome column (nullable string) and a
+   resolved_at (nullable datetime) to the Prediction model.
+2. Add endpoint:
+   - POST /api/predictions/{prediction_id}/resolve  { outcome: "yes" | "no" }
+     * Only the creator (403 otherwise). 404 if unknown. 409 if already resolved.
+     * Validates outcome is exactly "yes" or "no" (422 via Pydantic Literal).
+   - GET /api/leagues/{league_id}/leaderboard  (members only)
+     * Returns, for every member of the league, an entry:
+       { user_id, email, points, correct, total, accuracy }
+       where points = sum over that user's settled picks of (+stake if the pick
+       matches resolved_outcome else -stake); correct = # of matching settled picks;
+       total = # of settled picks; accuracy = correct/total (0.0 if total == 0).
+     * Sort by points DESC, then accuracy DESC, then user_id ASC.
+     * Include clearly all members even if they have 0 settled picks (points 0).
+3. Make sure the pick endpoints still refuse picks on a non-"open" prediction
+   (add a 409 if someone tries to pick a resolved prediction — this is a small
+   addition to the M3 pick handler).
+4. Add Pydantic schemas: ResolveRequest (outcome: Literal["yes","no"]),
+   LeaderboardEntry.
+
+Frontend (React):
+5. In the prediction list, if the current user is the creator and the prediction
+   is open, show "Resolve Yes" / "Resolve No" buttons. Show the outcome + status
+   once resolved.
+6. In the league view, add a Leaderboard section that shows each member's email,
+   points, correct/total, and accuracy %, sorted.
+7. Keep everything else working.
+
+IMPORTANT: update the tables in the database. create_tables.py only creates
+missing tables — it will NOT add new columns to the existing predictions table.
+So you must ALTER TABLE predictions to add resolved_outcome and resolved_at
+(e.g. run the ALTER statements yourself against DATABASE_URL, or add a tiny
+migration script). Then confirm the columns exist.
+
+Report back: files changed/created with full contents, exact commands, and proof
+(resolve, double-resolve 409, non-creator 403, pick-on-resolved 409, leaderboard
+reflects the right points/accuracy) with curl. Create and delete proof data.
+Do not start long-running servers.
+```
+
+---
+
+## Milestone 3 — Predictions (DONE)
 
 ```
 Add predictions to Frager. This is Milestone 3. Auth (M1) and leagues (M2) exist —

@@ -50,6 +50,7 @@ class PredictionOut(BaseModel):
     created_at: datetime
     yes_count: int
     no_count: int
+    resolved_outcome: str | None = None
 
 
 class PickCreate(BaseModel):
@@ -69,3 +70,16 @@ class PickOut(BaseModel):
 
 class PredictionDetail(PredictionOut):
     picks: list[PickOut]
+
+
+class ResolveRequest(BaseModel):
+    outcome: Literal["yes", "no"]
+
+
+class LeaderboardEntry(BaseModel):
+    user_id: int
+    email: str
+    points: int
+    correct: int
+    total: int
+    accuracy: float
