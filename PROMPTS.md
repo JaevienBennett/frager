@@ -4,7 +4,57 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
-## Milestone 7 — Nicknames + reveal picks after you pick
+## Milestone 8 — Fix stake input + clarify pick counts & show stakes
+
+```
+Fix two related issues in the Frager prediction/pick UI. Milestone 8. Frontend-
+focused; a small backend addition is allowed (see item 6). No new product features.
+
+BUG 1 — stake entered doesn't reliably save (e.g. typed 2, saved as 1/0).
+Root cause is the controlled number input in frontend/src/App.jsx (LeagueView,
+the pick form):
+  <input type="number" min="0" placeholder="stake"
+         value={(picks[p.id] || {}).stake ?? 0} ... />
+The field is pre-filled with 0 and the value is coerced loosely, so a leading 0
+or a submit racing the keystroke can persist the wrong number. Fix it properly:
+  a. Do NOT pre-fill with 0. Start the input EMPTY (value '' when there's no
+     entered stake) and use placeholder "0". Store the raw string in `picks`
+     state; do not coerce on every keystroke.
+  b. On submit, parse strictly: a helper `parseStake(raw)` that trims, treats ''
+     as 0, requires an integer (reject '2.5' or junk with a friendly error),
+     and clamps to 0..1000000.
+  c. Disable the submit button while a pick request is in flight to avoid the
+     double-click / race that can send a stale value. Show "Saving…" on the button.
+  d. Keep the select (side) working the same way.
+
+BUG 2 — the "Yes: N · No: N" line is confusing: those are PICK COUNTS (how many
+people chose each side), not points. Make the UI unambiguous:
+  e. Relabel to make it clear these are votes/picks, e.g.:
+     "3 picks · 2 said Yes · 1 said No"  (or similar clear wording).
+  f. Also show the TOTAL stake at risk per side, so users see points, not just
+     head-counts. This requires the backend list endpoint to return it.
+
+Backend (small addition):
+6. Extend the league predictions LIST response (PredictionOut) with two fields:
+   - yes_stake: total stake on yes picks for that prediction
+   - no_stake: total stake on no picks
+   Compute by summing pick.stake for each side. Keep existing yes_count/no_count.
+   Do not add names to the list endpoint.
+
+Frontend (rest):
+7. In the prediction list, render the clarified counts + total stakes per side,
+   e.g. "2 said Yes (10 pts) · 1 said No (5 pts)".
+8. Re-test and make sure a stake of 2 actually saves as 2 (show the saved value
+   in the revealed picks list: "nickname — YES (stake 2)").
+9. Keep reveal-after-pick, resolve, leaderboard, and friendly-error behavior.
+
+Report back: full changed files, npm run build result, and a clear before/after
+description of the stake bug fix. Do not start long-running servers.
+```
+
+---
+
+## Milestone 7 — Nicknames + reveal picks after you pick (DONE)
 
 ```
 Add nicknames and make other members' picks visible to a user after that user has

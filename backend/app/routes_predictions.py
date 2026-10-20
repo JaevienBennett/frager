@@ -31,6 +31,8 @@ def pick_out(pick: Pick, nickname: str) -> PickOut:
 def prediction_out(prediction: Prediction) -> PredictionOut:
     yes = sum(1 for p in prediction.picks if p.side == "yes")
     no = sum(1 for p in prediction.picks if p.side == "no")
+    yes_stake = sum(p.stake for p in prediction.picks if p.side == "yes")
+    no_stake = sum(p.stake for p in prediction.picks if p.side == "no")
     return PredictionOut(
         id=prediction.id,
         question=prediction.question,
@@ -39,6 +41,8 @@ def prediction_out(prediction: Prediction) -> PredictionOut:
         created_at=prediction.created_at,
         yes_count=yes,
         no_count=no,
+        yes_stake=yes_stake,
+        no_stake=no_stake,
         resolved_outcome=prediction.resolved_outcome,
     )
 

@@ -43,6 +43,15 @@ async function fetchJsonWithRetry(url, options = {}, attempts = 3) {
   throw lastError
 }
 
+function parseStake(raw) {
+  const trimmed = String(raw ?? '').trim()
+  if (trimmed === '') return 0
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error('Stake must be a whole number of points (0 or more).')
+  }
+  return Math.min(Number(trimmed), 1000000)
+}
+
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY))
   const [user, setUser] = useState(null)
@@ -297,6 +306,7 @@ function LeagueView({ token, userId, league, onBack }) {
   const [question, setQuestion] = useState('')
   const [error, setError] = useState('')
   const [picks, setPicks] = useState({})
+  const [saving, setSaving] = useState({})
 
   const auth = { Authorization: `Bearer ${token}` }
 
@@ -357,7 +367,7 @@ function LeagueView({ token, userId, league, onBack }) {
   function updatePickForm(predictionId, field, value) {
     setPicks((prev) => ({
       ...prev,
-      [predictionId]: { side: 'yes', stake: 0, ...prev[predictionId], [field]: value },
+      [predictionId]: { side: 'yes', stake: '', ...prev[predictionId], [field]: value },
     }))
   }
 
@@ -380,16 +390,27 @@ function LeagueView({ token, userId, league, onBack }) {
   async function handlePick(e, predictionId) {
     e.preventDefault()
     setError('')
-    const form = picks[predictionId] || { side: 'yes', stake: 0 }
+    const form = picks[predictionId] || { side: 'yes', stake: '' }
+    let stake
+    try {
+      stake = parseStake(form.stake)
+    } catch (err) {
+      setError(err.message)
+      return
+    }
+    setSaving((prev) => ({ ...prev, [predictionId]: true }))
     try {
       await fetchJson(`${API}/api/predictions/${predictionId}/pick`, {
         method: 'POST',
         headers: { ...auth, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ side: form.side, stake: Number(form.stake) || 0 }),
+        body: JSON.stringify({ side: form.side, stake }),
       })
+      setPicks((prev) => ({ ...prev, [predictionId]: { side: form.side, stake: '' } }))
       await Promise.all([loadPredictions(), loadDetail(predictionId)])
     } catch (err) {
       setError(err.message)
+    } finally {
+      setSaving((prev) => ({ ...prev, [predictionId]: false }))
     }
   }
 
@@ -464,7 +485,9 @@ function LeagueView({ token, userId, league, onBack }) {
                   </em>
                 </div>
                 <div data-testid="prediction-counts">
-                  Yes: {p.yes_count} · No: {p.no_count}
+                  {p.yes_count + p.no_count} pick
+                  {p.yes_count + p.no_count === 1 ? '' : 's'} · {p.yes_count} said Yes (
+                  {p.yes_stake} pts) · {p.no_count} said No ({p.no_stake} pts)
                 </div>
                 {expanded === p.id && details[p.id] && (
                   <div data-testid="picks-detail" style={{ marginTop: 6 }}>
@@ -498,12 +521,16 @@ function LeagueView({ token, userId, league, onBack }) {
                     <input
                       type="number"
                       min="0"
-                      placeholder="stake"
-                      value={(picks[p.id] || {}).stake ?? 0}
+                      max="1000000"
+                      step="1"
+                      placeholder="0"
+                      value={(picks[p.id] || {}).stake ?? ''}
                       onChange={(e) => updatePickForm(p.id, 'stake', e.target.value)}
                       style={{ width: 70 }}
                     />
-                    <button type="submit">Pick</button>
+                    <button type="submit" disabled={!!saving[p.id]}>
+                      {saving[p.id] ? 'Saving…' : 'Pick'}
+                    </button>
                   </form>
                 )}
                 {p.creator_id === userId && p.status === 'open' && (

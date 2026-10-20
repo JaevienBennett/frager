@@ -63,6 +63,8 @@ class PredictionOut(BaseModel):
     created_at: datetime
     yes_count: int
     no_count: int
+    yes_stake: int
+    no_stake: int
     resolved_outcome: str | None = None
 
 
