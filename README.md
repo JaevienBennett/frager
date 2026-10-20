@@ -73,3 +73,7 @@ Credentials are never hardcoded in the source.
 | POST   | `/api/auth/signup`    | —      | `{email, password}` | 201 `{access_token, token_type}` | 409 duplicate email |
 | POST   | `/api/auth/login`     | —      | `{email, password}` | 200 `{access_token, token_type}` | 401 bad credentials |
 | GET    | `/api/auth/me`        | Bearer | —                   | 200 `{id, email, created_at}` | 401 missing/invalid token |
+| POST   | `/api/leagues`        | Bearer | `{name}`            | 201 `{id, name, invite_code, owner_id, member_count}` | 401 |
+| GET    | `/api/leagues`        | Bearer | —                   | 200 list of the user's leagues | 401 |
+| GET    | `/api/leagues/{id}`   | Bearer | —                   | 200 league (members only) | 404 non-member/unknown |
+| POST   | `/api/leagues/join`   | Bearer | `{invite_code}`     | 200 league, joined | 404 unknown code, 409 already a member |

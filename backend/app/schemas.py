@@ -19,3 +19,19 @@ class UserOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class LeagueCreate(BaseModel):
+    name: str
+
+
+class LeagueOut(BaseModel):
+    id: int
+    name: str
+    invite_code: str
+    owner_id: int
+    member_count: int
+
+
+class JoinRequest(BaseModel):
+    invite_code: str

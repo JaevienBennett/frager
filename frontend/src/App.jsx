@@ -83,6 +83,7 @@ export default function App() {
         <section>
           <p data-testid="user-status">Logged in as {user.email}</p>
           <button onClick={logout}>Log out</button>
+          <Leagues token={token} />
         </section>
       ) : (
         <form onSubmit={submit} style={{ display: 'grid', gap: 8 }}>
@@ -113,5 +114,110 @@ export default function App() {
 
       {error && <p style={{ color: 'crimson' }}>{error}</p>}
     </main>
+  )
+}
+
+function Leagues({ token }) {
+  const [leagues, setLeagues] = useState([])
+  const [name, setName] = useState('')
+  const [joinCode, setJoinCode] = useState('')
+  const [newLeague, setNewLeague] = useState(null)
+  const [error, setError] = useState('')
+
+  const auth = { Authorization: `Bearer ${token}` }
+
+  const loadLeagues = useCallback(async () => {
+    const res = await fetch(`${API}/api/leagues`, { headers: auth })
+    if (res.ok) setLeagues(await res.json())
+  }, [token])
+
+  useEffect(() => {
+    loadLeagues()
+  }, [loadLeagues])
+
+  async function handleCreate(e) {
+    e.preventDefault()
+    setError('')
+    try {
+      const res = await fetch(`${API}/api/leagues`, {
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.detail || `HTTP ${res.status}`)
+      }
+      const league = await res.json()
+      setNewLeague(league)
+      setName('')
+      await loadLeagues()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function handleJoin(e) {
+    e.preventDefault()
+    setError('')
+    try {
+      const res = await fetch(`${API}/api/leagues/join`, {
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invite_code: joinCode }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.detail || `HTTP ${res.status}`)
+      }
+      setJoinCode('')
+      await loadLeagues()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  return (
+    <section style={{ marginTop: '1.5rem' }}>
+      <h2>Leagues</h2>
+
+      <form onSubmit={handleCreate} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        <input
+          placeholder="league name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+        />
+        <button type="submit">Create league</button>
+      </form>
+
+      <form onSubmit={handleJoin} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        <input
+          placeholder="invite code"
+          value={joinCode}
+          onChange={(e) => setJoinCode(e.target.value)}
+          required
+        />
+        <button type="submit">Join league</button>
+      </form>
+
+      {newLeague && (
+        <p data-testid="new-league">
+          Created <strong>{newLeague.name}</strong> — invite code:{' '}
+          <code style={{ fontSize: '1.1em', fontWeight: 700 }}>{newLeague.invite_code}</code>
+        </p>
+      )}
+
+      <ul style={{ paddingLeft: '1.2rem' }}>
+        {leagues.map((l) => (
+          <li key={l.id} data-testid="league-item">
+            {l.name} — {l.member_count} member{l.member_count === 1 ? '' : 's'} · code{' '}
+            <code>{l.invite_code}</code>
+          </li>
+        ))}
+      </ul>
+
+      {error && <p style={{ color: 'crimson' }}>{error}</p>}
+    </section>
   )
 }

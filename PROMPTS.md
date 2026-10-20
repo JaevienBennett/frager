@@ -4,7 +4,50 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
-## Milestone 1 — Auth (sign up / log in)
+## Milestone 2 — Leagues (create, invite, join)
+
+```
+Add leagues to Frager. This is Milestone 2. Auth (Milestone 1) already exists —
+reuse get_current_user, get_db, and the existing patterns. Do NOT add predictions yet.
+
+Backend (FastAPI):
+1. Add two models in app/models.py:
+   - League: id (int PK), name (string, not null), invite_code (string, unique,
+     indexed, not null), owner_id (FK -> users.id, not null), created_at (datetime).
+   - Membership: id (int PK), league_id (FK -> leagues.id), user_id (FK -> users.id),
+     created_at (datetime). Add a UNIQUE constraint on (league_id, user_id) so a user
+     can't join the same league twice.
+   - The league owner should automatically be a member when the league is created.
+2. Generate invite_code server-side (e.g. secrets.token_urlsafe(6)); never accept it
+   from the client on create.
+3. Add an APIRouter (prefix /api/leagues), all endpoints require authentication:
+   - POST /api/leagues              { name } -> creates league, returns { id, name,
+     invite_code, owner_id, member_count }
+   - GET  /api/leagues              -> list leagues the current user is a member of
+   - GET  /api/leagues/{id}         -> league detail (members only; 404 otherwise)
+   - POST /api/leagues/join         { invite_code } -> joins the league; 404 if the
+     code is unknown, 409 if already a member; makes the user a member
+4. Add Pydantic schemas (LeagueCreate, LeagueOut, JoinRequest) in schemas.py.
+5. IMPORTANT: actually CREATE the new tables. Update create_tables.py (it already
+   does Base.metadata.create_all) and RUN it against the database so leagues and
+   memberships exist. Confirm the tables afterward.
+
+Frontend (React):
+6. After login, show a "Leagues" section:
+   - A form to create a league (name) -> then show the invite code prominently.
+   - A field to join a league by invite code.
+   - A list of the user's leagues (name + member count + invite code).
+7. Keep the existing auth UI and health indicator working.
+
+Report back: files changed/created with full contents, the exact commands to run,
+and proof that create -> join (as a second user) -> list works end-to-end
+(show the curl commands). Create your proof users and delete them afterward.
+Do not start long-running servers.
+```
+
+---
+
+## Milestone 1 — Auth (DONE)
 
 ```
 Implement authentication for the Frager backend and wire it into the frontend.
