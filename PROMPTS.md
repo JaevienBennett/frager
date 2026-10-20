@@ -4,7 +4,49 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
-## Milestone 4 — Resolve + payout + leaderboard
+## Milestone 5 — Deployment prep (make it host-ready)
+
+```
+Prepare Frager for deployment. This is Milestone 5. Do NOT change any features —
+this milestone only makes the app configurable and host-ready. The frontend is
+deploying to Vercel and the backend to Render; Postgres is Neon (already in use).
+
+Frontend (React):
+1. Replace the hardcoded 'http://localhost:8000' in App.jsx with a value read from
+   an env var: import.meta.env.VITE_API_URL, falling back to 'http://localhost:8000'
+   when it's undefined (so local dev keeps working with zero config).
+2. Do the same for any other hardcoded localhost reference in the frontend.
+3. Add a frontend/.env.example containing: VITE_API_URL=http://localhost:8000
+4. Make sure the app still builds with `npm run build` and still works locally
+   with no .env present (falls back to localhost).
+
+Backend (FastAPI):
+5. CORS currently allows only http://localhost:5173. Make the allowed origins
+   configurable via an env var CORS_ORIGINS (comma-separated), falling back to
+   the current localhost values. Add CORS_ORIGINS to backend/.env.example.
+6. Add a production start command that binds to the port Render provides: use
+   uvicorn with $PORT. Document it.
+7. Add a `backend/render.yaml` or a short DEPLOY section in README describing:
+   - backend: root dir backend/, build `pip install -r requirements.txt`,
+     start `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+   - env vars needed: DATABASE_URL, SECRET_KEY, ACCESS_TOKEN_EXPIRE_MINUTES,
+     CORS_ORIGINS
+8. Add a top-level DEPLOY.md explaining the whole setup: Neon (already done),
+   Render for the backend, Vercel for the frontend, and that VITE_API_URL on
+   Vercel must point at the Render URL, and CORS_ORIGINS on Render must point at
+   the Vercel URL. Include the exact dashboard steps (no CLI).
+
+Do NOT commit any real secrets. .env stays gitignored. Only .env.example files
+get committed.
+
+Report back: files changed/created with full contents, and confirmation that
+`npm run build` and `python -c "import app.main"` both still succeed.
+Do not start long-running servers.
+```
+
+---
+
+## Milestone 4 — Resolve + payout + leaderboard (DONE)
 
 ```
 Add resolution and a league leaderboard to Frager. This is Milestone 4 — the payoff

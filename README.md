@@ -2,6 +2,8 @@
 
 Full-stack skeleton with auth: FastAPI + PostgreSQL backend, React (Vite) frontend.
 
+Deployment (Neon + Render + Vercel): see [DEPLOY.md](DEPLOY.md).
+
 ## Structure
 
 ```
