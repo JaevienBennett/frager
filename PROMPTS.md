@@ -4,7 +4,48 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
-## Milestone 5 — Deployment prep (make it host-ready)
+## Milestone 6 — UX cleanup (remove dev indicator, friendly errors + retry)
+
+```
+Polish the Frager frontend UX. This is Milestone 6 — no backend changes, no new
+features, just making the app not look broken to a first-time visitor.
+
+Problem being fixed: the backend is on Render's free tier and "sleeps" after
+inactivity. The first request after a sleep can time out, and right now the app
+shows a raw red "Failed to fetch", which looks broken. Also there's a leftover
+dev-only "Backend: ok" indicator under the title.
+
+Frontend (React) — edit frontend/src/App.jsx:
+1. REMOVE the "Backend: ok" health indicator entirely (the <p data-testid=
+   "backend-status"> and the fetch of /api/health behind it). It was only for
+   early development.
+2. Add a small helper `fetchJson(url, options)` that wraps fetch and:
+   - Sets a generous timeout (e.g. 60s) using AbortController, since the free
+     backend can be slow to wake.
+   - THROWS a clear, human-readable Error on network failure — never let the raw
+     browser string "Failed to fetch" reach the UI. On a network error, use a
+     message like: "Couldn't reach the server. It may be waking up — please try
+     again in a moment."
+   - On a non-OK response, surface the backend's `detail` message when present
+     (keep the current behavior).
+3. Use a simple retry for GET requests on mount (e.g. try up to 3 times with a
+   short delay, showing "Waking up the server…" as the loading state), so a cold
+   start self-heals without the user refreshing.
+4. Make ALL existing calls (signup/login, /me, leagues list/create/join,
+   predictions list/create, pick, resolve, leaderboard) go through the helper so
+   no raw "Failed to fetch" can appear anywhere.
+5. Keep the rest of the UI and all existing behavior/structure working.
+
+Do NOT change the backend. Do NOT change any API shapes.
+
+Report back: the updated App.jsx (full contents), confirmation that `npm run
+build` passes, and a short note on where the user now sees the friendly message.
+Do not start long-running servers.
+```
+
+---
+
+## Milestone 5 — Deployment prep (DONE)
 
 ```
 Prepare Frager for deployment. This is Milestone 5. Do NOT change any features —
