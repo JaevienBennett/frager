@@ -131,55 +131,69 @@ export default function App() {
   }
 
   return (
-    <main style={{ fontFamily: 'system-ui, sans-serif', padding: '2rem', maxWidth: 420 }}>
-      <h1>Frager</h1>
+    <main className="app">
+      <div className="container">
+        <h1 className="app-title">Frager</h1>
 
-      {booting ? (
-        <p>{WAKING_UP}</p>
-      ) : user ? (
-        <section>
-          <p data-testid="user-status">Logged in as {user.nickname}</p>
-          <button onClick={logout}>Log out</button>
-          <Leagues token={token} userId={user.id} />
-        </section>
-      ) : (
-        <form onSubmit={submit} style={{ display: 'grid', gap: 8 }}>
-          <h2>{mode === 'login' ? 'Log in' : 'Sign up'}</h2>
-          <input
-            type="email"
-            placeholder="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-          {mode === 'signup' && (
+        {booting ? (
+          <p className="muted">{WAKING_UP}</p>
+        ) : user ? (
+          <section className="stack">
+            <div className="row between">
+              <p className="user-status" data-testid="user-status">
+                Logged in as {user.nickname}
+              </p>
+              <button className="btn btn-secondary" onClick={logout}>
+                Log out
+              </button>
+            </div>
+            <Leagues token={token} userId={user.id} />
+          </section>
+        ) : (
+          <form className="card form auth-card" onSubmit={submit}>
+            <h2 className="section-title">{mode === 'login' ? 'Log in' : 'Sign up'}</h2>
             <input
-              placeholder="nickname (2-24 chars)"
-              value={nickname}
-              onChange={(e) => setNickname(e.target.value)}
+              className="input"
+              type="email"
+              placeholder="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               required
-              minLength={2}
-              maxLength={24}
             />
-          )}
-          <input
-            type="password"
-            placeholder="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-          <button type="submit">{mode === 'login' ? 'Log in' : 'Sign up'}</button>
-          <button
-            type="button"
-            onClick={() => setMode(mode === 'login' ? 'signup' : 'login')}
-          >
-            {mode === 'login' ? 'Need an account? Sign up' : 'Have an account? Log in'}
-          </button>
-        </form>
-      )}
+            {mode === 'signup' && (
+              <input
+                className="input"
+                placeholder="nickname (2-24 chars)"
+                value={nickname}
+                onChange={(e) => setNickname(e.target.value)}
+                required
+                minLength={2}
+                maxLength={24}
+              />
+            )}
+            <input
+              className="input"
+              type="password"
+              placeholder="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+            <button type="submit" className="btn btn-primary">
+              {mode === 'login' ? 'Log in' : 'Sign up'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setMode(mode === 'login' ? 'signup' : 'login')}
+            >
+              {mode === 'login' ? 'Need an account? Sign up' : 'Have an account? Log in'}
+            </button>
+          </form>
+        )}
 
-      {error && <p style={{ color: 'crimson' }}>{error}</p>}
+        {error && <p className="error">{error}</p>}
+      </div>
     </main>
   )
 }
@@ -242,63 +256,59 @@ function Leagues({ token, userId }) {
   }
 
   return (
-    <section style={{ marginTop: '1.5rem' }}>
-      <h2>Leagues</h2>
+    <section className="stack">
+      <h2 className="section-title">Leagues</h2>
 
-      <form onSubmit={handleCreate} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+      <form className="form-row" onSubmit={handleCreate}>
         <input
+          className="input"
           placeholder="league name"
           value={name}
           onChange={(e) => setName(e.target.value)}
           required
         />
-        <button type="submit">Create league</button>
+        <button type="submit" className="btn btn-primary">
+          Create league
+        </button>
       </form>
 
-      <form onSubmit={handleJoin} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+      <form className="form-row" onSubmit={handleJoin}>
         <input
+          className="input"
           placeholder="invite code"
           value={joinCode}
           onChange={(e) => setJoinCode(e.target.value)}
           required
         />
-        <button type="submit">Join league</button>
+        <button type="submit" className="btn btn-secondary">
+          Join league
+        </button>
       </form>
 
       {newLeague && (
-        <p data-testid="new-league">
+        <p className="success" data-testid="new-league">
           Created <strong>{newLeague.name}</strong> — invite code:{' '}
-          <code style={{ fontSize: '1.1em', fontWeight: 700 }}>{newLeague.invite_code}</code>
+          <code className="code">{newLeague.invite_code}</code>
         </p>
       )}
 
       {!loaded ? (
-        <p>{WAKING_UP}</p>
+        <p className="muted">{WAKING_UP}</p>
       ) : (
-        <ul style={{ paddingLeft: '1.2rem' }}>
+        <ul className="league-list">
           {leagues.map((l) => (
-            <li key={l.id} data-testid="league-item" style={{ marginBottom: 4 }}>
-              <button
-                onClick={() => setSelected(l)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  padding: 0,
-                  font: 'inherit',
-                  textDecoration: 'underline',
-                  cursor: 'pointer',
-                }}
-              >
+            <li key={l.id} className="list-item" data-testid="league-item">
+              <button className="link-btn" onClick={() => setSelected(l)}>
                 {l.name}
               </button>{' '}
               — {l.member_count} member{l.member_count === 1 ? '' : 's'} · code{' '}
-              <code>{l.invite_code}</code>
+              <code className="code">{l.invite_code}</code>
             </li>
           ))}
         </ul>
       )}
 
-      {error && <p style={{ color: 'crimson' }}>{error}</p>}
+      {error && <p className="error">{error}</p>}
 
       {selected && (
         <LeagueView
@@ -486,67 +496,63 @@ function LeagueView({ token, userId, league, onBack }) {
   }
 
   return (
-    <section
-      data-testid="league-view"
-      style={{ marginTop: '1rem', borderTop: '1px solid #999', paddingTop: '0.5rem' }}
-    >
-      <button onClick={onBack}>← Back to leagues</button>
-      <h3>{league.name}</h3>
+    <section className="league-view" data-testid="league-view">
+      <button className="btn btn-secondary" onClick={onBack}>
+        ← Back to leagues
+      </button>
+      <h3 className="section-title">{league.name}</h3>
 
-      <form onSubmit={handlePost} style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+      <form className="form-row" onSubmit={handlePost}>
         <input
+          className="input"
           placeholder="Ask a yes/no question…"
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           required
-          style={{ flex: 1 }}
         />
-        <button type="submit">Post prediction</button>
+        <button type="submit" className="btn btn-primary">
+          Post prediction
+        </button>
       </form>
 
       {!loaded ? (
-        <p>{WAKING_UP}</p>
+        <p className="muted">{WAKING_UP}</p>
       ) : (
         <>
-          <ul style={{ listStyle: 'none', padding: 0, display: 'grid', gap: 12 }}>
+          <ul className="cards">
             {predictions.map((p) => (
               <li
                 key={p.id}
+                className="card prediction"
                 data-testid="prediction-item"
-                style={{ border: '1px solid #ccc', padding: 8 }}
               >
-                <div>
+                <div className="prediction-head">
                   <button
+                    className="link-btn"
                     onClick={() => toggleDetail(p.id)}
                     data-testid="toggle-picks"
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      padding: 0,
-                      font: 'inherit',
-                      fontWeight: 700,
-                      textDecoration: 'underline',
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                    }}
                   >
                     {p.question}
                   </button>{' '}
-                  <em>({p.status})</em>
+                  <em
+                    className={`badge ${
+                      p.status === 'resolved' ? 'badge-resolved' : 'badge-open'
+                    }`}
+                  >
+                    ({p.status})
+                  </em>
                 </div>
                 {p.status === 'resolved' && (
                   <div
                     data-testid="outcome-banner"
-                    style={{
-                      fontWeight: 700,
-                      marginTop: 2,
-                      color: p.resolved_outcome === 'yes' ? '#137333' : '#c5221f',
-                    }}
+                    className={`outcome-banner ${
+                      p.resolved_outcome === 'yes' ? 'outcome-yes' : 'outcome-no'
+                    }`}
                   >
                     Resolved: {String(p.resolved_outcome).toUpperCase()}
                   </div>
                 )}
-                <div data-testid="prediction-counts">
+                <div className="counts muted" data-testid="prediction-counts">
                   {p.yes_count + p.no_count} pick
                   {p.yes_count + p.no_count === 1 ? '' : 's'} · {p.yes_count} said Yes (
                   {p.yes_stake} pts) · {p.no_count} said No ({p.no_stake} pts)
@@ -554,15 +560,23 @@ function LeagueView({ token, userId, league, onBack }) {
                 {(() => {
                   const mine = findMyPick(details[p.id], userId)
                   return mine ? (
-                    <div data-testid="my-pick" style={{ marginTop: 2, fontWeight: 600 }}>
-                      You picked: {mine.side.toUpperCase()} ({mine.stake} pts)
+                    <div className="mypick" data-testid="my-pick">
+                      You picked:{' '}
+                      <span
+                        className={`side-pill ${
+                          mine.side === 'yes' ? 'pill-yes' : 'pill-no'
+                        }`}
+                      >
+                        {mine.side.toUpperCase()}
+                      </span>{' '}
+                      ({mine.stake} pts)
                     </div>
                   ) : null
                 })()}
                 {expanded === p.id && details[p.id] && (
-                  <div data-testid="picks-detail" style={{ marginTop: 6 }}>
+                  <div className="picks-detail" data-testid="picks-detail">
                     {details[p.id].picks_visible ? (
-                      <ul style={{ margin: '4px 0', paddingLeft: '1.2rem' }}>
+                      <ul className="picks-list">
                         {details[p.id].picks.map((pick) => {
                           const correct = pick.was_correct
                           const swing =
@@ -575,23 +589,18 @@ function LeagueView({ token, userId, league, onBack }) {
                           return (
                             <li
                               key={pick.id}
+                              className={mine ? 'pick-item mine' : 'pick-item'}
                               data-testid="pick-item"
-                              style={mine ? { fontWeight: 700 } : undefined}
                             >
                               {pick.nickname} — {pick.side.toUpperCase()} (stake{' '}
                               {pick.stake})
                               {swing && (
-                                <span
-                                  style={{
-                                    color: correct ? '#137333' : '#c5221f',
-                                    marginLeft: 4,
-                                  }}
-                                >
+                                <span className={correct ? 'swing ok' : 'swing bad'}>
                                   {correct ? '✓' : '✗'} {swing}
                                 </span>
                               )}
                               {swing && mine && (
-                                <span style={{ color: correct ? '#137333' : '#c5221f' }}>
+                                <span className={correct ? 'swing ok' : 'swing bad'}>
                                   {' '}
                                   — that's you: {correct ? 'you were right!' : 'wrong'} (
                                   {swing})
@@ -602,18 +611,16 @@ function LeagueView({ token, userId, league, onBack }) {
                         })}
                       </ul>
                     ) : p.status === 'open' ? (
-                      <p style={{ margin: '4px 0', fontStyle: 'italic' }}>
+                      <p className="muted hint">
                         Make your pick to see what everyone chose.
                       </p>
                     ) : null}
                   </div>
                 )}
                 {p.status === 'open' && (
-                  <form
-                    onSubmit={(e) => handlePick(e, p.id)}
-                    style={{ display: 'flex', gap: 8, marginTop: 6 }}
-                  >
+                  <form className="form-row" onSubmit={(e) => handlePick(e, p.id)}>
                     <select
+                      className="select"
                       value={(picks[p.id] || {}).side || 'yes'}
                       onChange={(e) => updatePickForm(p.id, 'side', e.target.value)}
                     >
@@ -621,6 +628,7 @@ function LeagueView({ token, userId, league, onBack }) {
                       <option value="no">No</option>
                     </select>
                     <input
+                      className="input stake"
                       type="number"
                       min="0"
                       max="1000000"
@@ -628,73 +636,74 @@ function LeagueView({ token, userId, league, onBack }) {
                       placeholder="0"
                       value={(picks[p.id] || {}).stake ?? ''}
                       onChange={(e) => updatePickForm(p.id, 'stake', e.target.value)}
-                      style={{ width: 70 }}
                     />
-                    <button type="submit" disabled={!!saving[p.id]}>
+                    <button type="submit" className="btn btn-primary" disabled={!!saving[p.id]}>
                       {saving[p.id] ? 'Saving…' : 'Pick'}
                     </button>
                   </form>
                 )}
                 {pickErrors[p.id] && (
-                  <p
-                    data-testid="pick-error"
-                    style={{ color: 'crimson', margin: '4px 0 0', fontWeight: 600 }}
-                  >
+                  <p className="error pick-msg" data-testid="pick-error">
                     {pickErrors[p.id]}
                   </p>
                 )}
                 {pickSaved[p.id] && (
-                  <p
-                    data-testid="pick-saved"
-                    style={{ color: '#137333', margin: '4px 0 0', fontWeight: 700 }}
-                  >
+                  <p className="success pick-msg" data-testid="pick-saved">
                     {pickSaved[p.id]}
                   </p>
                 )}
                 {p.creator_id === userId && p.status === 'open' && (
-                  <div style={{ marginTop: 6, display: 'flex', gap: 8 }}>
-                    <button onClick={() => handleResolve(p.id, 'yes')}>Resolve Yes</button>
-                    <button onClick={() => handleResolve(p.id, 'no')}>Resolve No</button>
+                  <div className="btn-row">
+                    <button className="btn btn-primary" onClick={() => handleResolve(p.id, 'yes')}>
+                      Resolve Yes
+                    </button>
+                    <button className="btn btn-primary" onClick={() => handleResolve(p.id, 'no')}>
+                      Resolve No
+                    </button>
                   </div>
                 )}
               </li>
             ))}
           </ul>
 
-          <h4>Leaderboard</h4>
-          <table data-testid="leaderboard" style={{ borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ textAlign: 'left' }}>
-                <th style={{ padding: '0 12px 4px 0' }}>Member</th>
-                <th style={{ padding: '0 12px 4px 0' }}>Points</th>
-                <th
-                  style={{ padding: '0 12px 4px 0' }}
-                  title="Record (correct / total picks)"
-                >
-                  Record
-                </th>
-                <th style={{ padding: '0 12px 4px 0' }}>Accuracy</th>
-              </tr>
-            </thead>
-            <tbody>
-              {leaderboard.map((e) => (
-                <tr key={e.user_id}>
-                  <td style={{ padding: '2px 12px 2px 0' }}>{e.nickname}</td>
-                  <td style={{ padding: '2px 12px 2px 0' }}>{e.points}</td>
-                  <td style={{ padding: '2px 12px 2px 0' }}>
-                    {e.correct}/{e.total}
-                  </td>
-                  <td style={{ padding: '2px 12px 2px 0' }}>
-                    {(e.accuracy * 100).toFixed(0)}%
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="card leaderboard">
+            <h4 className="section-title">Leaderboard</h4>
+            <div className="table-wrap">
+              <table className="table" data-testid="leaderboard">
+                <thead>
+                  <tr>
+                    <th>Member</th>
+                    <th className="num">Points</th>
+                    <th className="num" title="Record (correct / total picks)">
+                      Record
+                    </th>
+                    <th className="num">Accuracy</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leaderboard.map((e) => (
+                    <tr
+                      key={e.user_id}
+                      className={e.user_id === userId ? 'me' : undefined}
+                    >
+                      <td>{e.nickname}</td>
+                      <td className="num">{e.points}</td>
+                      <td className="num">
+                        {e.correct}/{e.total}
+                      </td>
+                      <td className="num">
+                        {(e.accuracy * 100).toFixed(0)}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </>
       )}
 
-      {error && <p style={{ color: 'crimson' }}>{error}</p>}
+      {error && <p className="error">{error}</p>}
     </section>
   )
 }

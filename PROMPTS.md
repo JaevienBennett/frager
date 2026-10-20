@@ -4,7 +4,68 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
-## Milestone 10 — Reliable pick feedback + honest per-user state + clearer leaderboard
+## Milestone 11 — Visual polish (light theme, indigo/violet accent) [presentation only]
+
+```
+Make the Frager UI look clean, modern, and pleasant. VISUAL ONLY — do not change any
+logic, state, fetch calls, event handlers, or behavior. Same features, prettier skin.
+
+Current state: all styling is inline `style={{...}}` objects inside frontend/src/App.jsx.
+Convert to a small, consistent CSS design system.
+
+Step 1 — create frontend/src/styles.css and import it once in frontend/src/main.jsx
+(import './styles.css'). Do NOT use a CSS framework or add dependencies.
+
+Step 2 — define a light theme with CSS variables on :root:
+  - Accent: indigo/violet (e.g. --accent: #6d28d9; --accent-hover: #5b21b6; a soft tint
+    for backgrounds like --accent-soft: #f3f0ff).
+  - Neutrals: --bg (#f7f7fb page background), --card (#ffffff), --border (#e5e7eb),
+    --text (#1f2937), --muted (#6b7280).
+  - Feedback: --danger (#dc2626), --success (#16a34a), --warn.
+  - Spacing scale (e.g. 4/8/12/16/24/32) and radii (--radius: 10px).
+  - Use a clean system font stack.
+
+Step 3 — add reusable classes and apply them in App.jsx, replacing inline styles:
+  - .app (page bg, font), .container (max-width ~720px, centered, padding).
+  - .card / .panel: white, 1px border, radius, subtle shadow, padding.
+  - .btn, .btn-primary (accent bg, white text, hover darken), .btn-secondary
+    (white bg, border), .btn-danger (outline danger). Consistent padding/radius,
+    disabled state (reduced opacity, not-allowed cursor).
+  - .input, .select: full-width-friendly, border, focus ring in accent color.
+  - Forms: label + field spacing, .form-row for side-select + stake input + Pick button.
+  - Headings: clear hierarchy (h1 app title, h2 section titles), muted subtitles.
+  - Tables: .table with header row (muted uppercase small caps), row borders, right-align
+    numeric columns (Points/Record/Accuracy); subtle hover on rows.
+  - Badges/pills for YES/NO, status, and the resolved outcome (green YES / red NO tint).
+  - .error (danger text), .success (success text), .muted helper text.
+  - .mypick marker line: subtle accent-tinted pill so "You picked: ..." stands out.
+  - Date/created lines and the counts line styled as muted helper text.
+
+Step 4 — layout niceties:
+  - Prediction cards: header row with question + status badge, then counts line, then the
+    pick form, then result/marker content. Generous spacing, collapsible section readable.
+  - Leaderboard: white card, clean table, highlight the current user's row subtly (e.g.
+    accent-tinted background) — you can compare nickname to the logged-in user's nickname.
+  - Buttons in a row should align; primary action (Pick / Resolve / Create) uses
+    .btn-primary, others use .btn-secondary.
+  - Add sensible spacing between sections; make the signup/login screen a centered card.
+
+Constraints:
+  - Keep every text string, class hook, data-testid, and conditional rendering EXACTLY as
+    is (behavior-preserving). If an element uses inline styles that include dynamic values
+    (e.g. color chosen by was_correct), keep those dynamic bits but move static styling to
+    classes — e.g. use a className toggled by the condition instead of inline color.
+  - No new npm dependencies. No backend changes. No logic changes.
+  - Must remain responsive down to ~360px width (cards stack, tables scroll or shrink).
+
+Verify: npm run build succeeds. Report: files changed, build output, and a short
+description of the new look + which classes were introduced. Do not start long-running
+servers.
+```
+
+---
+
+## Milestone 10 — Reliable pick feedback + honest per-user state + clearer leaderboard (DONE)
 
 ```
 Fix three related problems in the Frager prediction/pick UX. Milestone 10. Frontend-
