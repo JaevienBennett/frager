@@ -4,7 +4,37 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
-## Milestone 12 — Visual identity & game feel (presentation only) [no logic changes]
+## Milestone 13 — Logo fix: chip-with-question-mark brand mark [presentation only]
+
+```
+Replace the current checkmark logo with a coin/chip mark that matches the product
+(predictions + wagering), not a task app. VISUAL ONLY — no logic/behavior changes.
+
+The current inline Logo component in frontend/src/App.jsx draws a violet checkmark.
+Replace its SVG with this "chip with question mark" mark (exact SVG, 32x32 viewBox):
+
+  <svg width="28" height="28" viewBox="0 0 32 32" fill="none" role="img" aria-label="Frager">
+    <circle cx="16" cy="16" r="14" fill="var(--accent)" />
+    <circle cx="16" cy="16" r="14" stroke="var(--accent-hover)" stroke-width="2" />
+    <circle cx="16" cy="16" r="9.5" stroke="#fff" stroke-width="2" stroke-dasharray="3 3" opacity="0.9" />
+    <text x="16" y="21.5" font-size="14" font-weight="800" fill="#fff"
+          text-anchor="middle" font-family="inherit">?</text>
+  </svg>
+
+Requirements:
+  - Keep the existing Brand/header/auth placement and sizes; only swap the mark.
+  - Use the theme variables (var(--accent) / var(--accent-hover)) so the mark follows the
+    design system; the dashed inner ring and "?" stay white.
+  - Ensure it looks correct at the header size (~28px) and any smaller inline uses.
+  - Do not change the wordmark, header layout, or any other styling/behavior.
+
+Verify: npm run build succeeds. Report the changed file(s) and build output. No
+long-running servers.
+```
+
+---
+
+## Milestone 12 — Visual identity & game feel (presentation only) [no logic changes] (DONE)
 
 ```
 Give Frager real personality so it feels like a fun social prediction game, not just a

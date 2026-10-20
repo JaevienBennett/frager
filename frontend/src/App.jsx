@@ -75,17 +75,30 @@ function Logo({ size = 26 }) {
       height={size}
       viewBox="0 0 32 32"
       role="img"
-      aria-label="Frager logo"
+      aria-label="Frager"
     >
-      <rect x="1" y="1" width="30" height="30" rx="9" fill="var(--accent)" />
-      <path
-        d="M9.5 16.5l4.4 4.4 8.9-9.6"
-        fill="none"
-        stroke="#ffffff"
-        strokeWidth="3.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
+      <circle cx="16" cy="16" r="14" fill="var(--accent)" />
+      <circle cx="16" cy="16" r="14" stroke="var(--accent-hover)" strokeWidth="2" />
+      <circle
+        cx="16"
+        cy="16"
+        r="9.5"
+        stroke="#fff"
+        strokeWidth="2"
+        strokeDasharray="3 3"
+        opacity="0.9"
       />
+      <text
+        x="16"
+        y="21.5"
+        fontSize="14"
+        fontWeight="800"
+        fill="#fff"
+        textAnchor="middle"
+        fontFamily="inherit"
+      >
+        ?
+      </text>
     </svg>
   )
 }
