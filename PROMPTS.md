@@ -4,7 +4,48 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
-## Milestone 0 — Scaffold
+## Milestone 1 — Auth (sign up / log in)
+
+```
+Implement authentication for the Frager backend and wire it into the frontend.
+This is Milestone 1. Add ONLY auth — no leagues, no predictions yet.
+
+Backend (FastAPI):
+1. Add a User model (SQLAlchemy) in app/models.py:
+   - id (int, primary key)
+   - email (string, unique, not null, indexed)
+   - password_hash (string, not null)
+   - created_at (datetime, defaults to now)
+2. Add password hashing with passlib[bcrypt]. Never store plaintext passwords.
+3. Add JWT auth using python-jose[cryptography]. Create:
+   - POST /api/auth/signup  { email, password } -> creates user, returns an access token
+   - POST /api/auth/login   { email, password } -> verifies, returns an access token
+   - GET  /api/auth/me      -> returns the current user (requires a valid Bearer token)
+4. Reject signup if the email already exists (409). Reject login on bad credentials (401).
+5. Put a SECRET_KEY and token expiry in config read from env vars (add them to .env.example).
+6. Add a get_current_user dependency that decodes the JWT and loads the user.
+7. IMPORTANT: actually CREATE the users table. Add a create_all (or a small
+   create_tables script) and run it against the database so the table exists.
+   Use the existing DATABASE_URL from .env.
+
+Frontend (React):
+8. Add simple signup and login forms (email + password). On success, store the
+   token in localStorage and show "Logged in as <email>".
+9. Add a logout button that clears the token.
+10. On load, if a token exists, call GET /api/auth/me and show the logged-in state.
+11. Keep the existing "Backend: ok" health indicator.
+
+Dependencies: add passlib[bcrypt], python-jose[cryptography], python-multipart
+to requirements.txt. Add any needed npm packages (plain fetch is fine, no axios).
+
+Report back: files changed/created with full contents, the exact commands to run
+the backend and frontend, and proof that signup + login + /api/auth/me work
+(e.g. the curl commands you'd use). Do not start long-running servers.
+```
+
+---
+
+## Milestone 0 — Scaffold (DONE)
 
 ```
 Scaffold a new full-stack web app called Frager. This is Milestone 0: get a
