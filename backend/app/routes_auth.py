@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from .models import User
-from .schemas import Credentials, Token, UserOut
+from .schemas import Credentials, SignupRequest, Token, UserOut
 from .security import (
     create_access_token,
     get_current_user,
@@ -15,14 +15,24 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/signup", response_model=Token, status_code=status.HTTP_201_CREATED)
-def signup(body: Credentials, db: Session = Depends(get_db)):
+def signup(body: SignupRequest, db: Session = Depends(get_db)):
     existing = db.query(User).filter(User.email == body.email).first()
     if existing is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email already registered",
         )
-    user = User(email=body.email, password_hash=hash_password(body.password))
+    existing = db.query(User).filter(User.nickname == body.nickname).first()
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Nickname already taken",
+        )
+    user = User(
+        email=body.email,
+        nickname=body.nickname,
+        password_hash=hash_password(body.password),
+    )
     db.add(user)
     db.commit()
     db.refresh(user)

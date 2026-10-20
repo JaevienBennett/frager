@@ -4,7 +4,73 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
-## Milestone 6 — UX cleanup (remove dev indicator, friendly errors + retry)
+## Milestone 7 — Nicknames + reveal picks after you pick
+
+```
+Add nicknames and make other members' picks visible to a user after that user has
+made their own pick (and always once the prediction is resolved). Milestone 7.
+Reuse existing patterns (get_current_user, get_db, membership helpers). Keep the
+backend API shapes as compatible as possible.
+
+PART A — Nicknames
+1. Add a `nickname` column to the User model (string, nullable=False, unique=True,
+   indexed). It's the public display name shown to other members (emails should
+   stop being shown to other users).
+2. Signup must accept and store a nickname:
+   - Update the signup endpoint and its Pydantic schema to take { email, nickname,
+     password }. Reject a duplicate nickname with 409.
+   - Login stays email + password (nickname is only a display name).
+   - Validate: nickname 2–24 chars, not blank. (422 on bad input.)
+3. MIGRATION (the trap): users table already exists, so create_tables.py will NOT
+   add the column. Write an idempotent migrate_v7 script that ALTERs the users
+   table to add a nullable `nickname` column first, backfills any existing rows
+   (e.g. set nickname to the part of the email before the '@', ensuring uniqueness,
+   fall back to 'user-<id>'), then adds the UNIQUE index. Run it against DATABASE_URL
+   and confirm the column + unique index exist.
+   - Because existing rows have no nickname, add the column NULLABLE, backfill, then
+     set NOT NULL + unique index. Do it in that order so it doesn't fail on old rows.
+4. Anywhere the API returns a user to another user, return `nickname` (not email).
+   Specifically:
+   - LeaderboardEntry: replace `email` with `nickname`.
+   - The pick detail (PickOut / PredictionDetail): each pick should include the
+     picker's `nickname` (so the frontend can label picks). Do not expose emails.
+   - UserOut for /api/auth/me may still include email (it's the user's own account).
+
+PART B — Reveal picks after you pick
+5. Change the prediction detail endpoint logic:
+   - GET /api/predictions/{id} should include the full list of picks ONLY IF:
+       (a) the caller has already made a pick on this prediction, OR
+       (b) the prediction.status == "resolved".
+     Otherwise return the prediction WITHOUT the picks list (so the frontend can't
+     leak other people's choices early). Simplest: return `picks: []` plus a boolean
+     `picks_visible: bool` so the frontend knows whether to render them or show a
+     "make your pick to see what everyone chose" hint.
+   - Each visible pick carries: user_id, nickname, side, stake.
+6. The league predictions LIST endpoint (GET /api/leagues/{id}/predictions) should
+   keep returning only counts (yes_count/no_count) as it does today — do NOT add
+   names there (too heavy). Names come from the detail endpoint.
+
+Frontend (React):
+7. Signup form: add a nickname field (alongside email + password).
+8. In the LeagueView, each prediction becomes expandable: fetch its detail when the
+   user opens it (or auto-fetch per prediction). Show:
+   - If picks_visible: a list of "nickname — YES/NO (stake N)".
+   - If not visible: "Make your pick to see what everyone chose." Once the user
+     picks, re-fetch and reveal.
+   - Once resolved: always show the picks plus the outcome.
+9. Keep counts, pick form, resolve buttons (creator only), and leaderboard working.
+   Leaderboard now shows nickname instead of email.
+10. Keep the friendly-error/retry behavior from Milestone 6.
+
+Report back: files changed/created with full contents, the exact commands, and
+proof via curl: duplicate nickname 409, verify picks hidden before a pick and shown
+after, picks shown when resolved, leaderboard uses nickname. Create and delete proof
+data. Do not start long-running servers.
+```
+
+---
+
+## Milestone 6 — UX cleanup (DONE)
 
 ```
 Polish the Frager frontend UX. This is Milestone 6 — no backend changes, no new

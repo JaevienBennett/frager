@@ -17,6 +17,17 @@ from .security import get_current_user, get_db
 router = APIRouter(prefix="/api", tags=["predictions"])
 
 
+def pick_out(pick: Pick, nickname: str) -> PickOut:
+    return PickOut(
+        id=pick.id,
+        user_id=pick.user_id,
+        nickname=nickname,
+        side=pick.side,
+        stake=pick.stake,
+        created_at=pick.created_at,
+    )
+
+
 def prediction_out(prediction: Prediction) -> PredictionOut:
     yes = sum(1 for p in prediction.picks if p.side == "yes")
     no = sum(1 for p in prediction.picks if p.side == "no")
@@ -107,7 +118,7 @@ def make_pick(
         response.status_code = status.HTTP_201_CREATED
     db.commit()
     db.refresh(pick)
-    return pick
+    return pick_out(pick, user.nickname)
 
 
 @router.get("/predictions/{prediction_id}", response_model=PredictionDetail)
@@ -121,8 +132,22 @@ def get_prediction(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Prediction not found"
         )
+    caller_has_pick = any(p.user_id == user.id for p in prediction.picks)
+    picks_visible = caller_has_pick or prediction.status == "resolved"
     detail = prediction_out(prediction).model_dump()
-    detail["picks"] = [PickOut.model_validate(p) for p in prediction.picks]
+    if picks_visible and prediction.picks:
+        picker_ids = {p.user_id for p in prediction.picks}
+        nicknames = {
+            u.id: u.nickname
+            for u in db.query(User).filter(User.id.in_(picker_ids)).all()
+        }
+        detail["picks"] = [
+            pick_out(p, nicknames.get(p.user_id, f"user-{p.user_id}"))
+            for p in prediction.picks
+        ]
+    else:
+        detail["picks"] = []
+    detail["picks_visible"] = picks_visible
     return PredictionDetail(**detail)
 
 
@@ -198,7 +223,7 @@ def leaderboard(
         entries.append(
             LeaderboardEntry(
                 user_id=member.id,
-                email=member.email,
+                nickname=member.nickname,
                 points=points,
                 correct=correct,
                 total=total,

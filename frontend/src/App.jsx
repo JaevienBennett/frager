@@ -49,6 +49,7 @@ export default function App() {
   const [booting, setBooting] = useState(() => !!localStorage.getItem(TOKEN_KEY))
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [nickname, setNickname] = useState('')
   const [mode, setMode] = useState('login')
   const [error, setError] = useState('')
 
@@ -89,13 +90,16 @@ export default function App() {
     e.preventDefault()
     setError('')
     try {
+      const body =
+        mode === 'signup' ? { email, nickname, password } : { email, password }
       const data = await fetchJson(`${API}/api/auth/${mode}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify(body),
       })
       localStorage.setItem(TOKEN_KEY, data.access_token)
       setPassword('')
+      setNickname('')
       setToken(data.access_token)
     } catch (err) {
       setError(err.message)
@@ -110,7 +114,7 @@ export default function App() {
         <p>{WAKING_UP}</p>
       ) : user ? (
         <section>
-          <p data-testid="user-status">Logged in as {user.email}</p>
+          <p data-testid="user-status">Logged in as {user.nickname}</p>
           <button onClick={logout}>Log out</button>
           <Leagues token={token} userId={user.id} />
         </section>
@@ -124,6 +128,16 @@ export default function App() {
             onChange={(e) => setEmail(e.target.value)}
             required
           />
+          {mode === 'signup' && (
+            <input
+              placeholder="nickname (2-24 chars)"
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+              required
+              minLength={2}
+              maxLength={24}
+            />
+          )}
           <input
             type="password"
             placeholder="password"
@@ -277,6 +291,8 @@ function Leagues({ token, userId }) {
 function LeagueView({ token, userId, league, onBack }) {
   const [predictions, setPredictions] = useState([])
   const [leaderboard, setLeaderboard] = useState([])
+  const [details, setDetails] = useState({})
+  const [expanded, setExpanded] = useState(null)
   const [loaded, setLoaded] = useState(false)
   const [question, setQuestion] = useState('')
   const [error, setError] = useState('')
@@ -307,6 +323,30 @@ function LeagueView({ token, userId, league, onBack }) {
       setError(err.message)
     }
   }, [league.id, token])
+
+  const loadDetail = useCallback(
+    async (predictionId) => {
+      try {
+        const data = await fetchJsonWithRetry(
+          `${API}/api/predictions/${predictionId}`,
+          { headers: auth },
+        )
+        setDetails((prev) => ({ ...prev, [predictionId]: data }))
+      } catch (err) {
+        setError(err.message)
+      }
+    },
+    [token],
+  )
+
+  function toggleDetail(predictionId) {
+    if (expanded === predictionId) {
+      setExpanded(null)
+      return
+    }
+    setExpanded(predictionId)
+    if (!details[predictionId]) loadDetail(predictionId)
+  }
 
   useEffect(() => {
     Promise.all([loadPredictions(), loadLeaderboard()]).finally(() =>
@@ -347,7 +387,7 @@ function LeagueView({ token, userId, league, onBack }) {
         headers: { ...auth, 'Content-Type': 'application/json' },
         body: JSON.stringify({ side: form.side, stake: Number(form.stake) || 0 }),
       })
-      await loadPredictions()
+      await Promise.all([loadPredictions(), loadDetail(predictionId)])
     } catch (err) {
       setError(err.message)
     }
@@ -361,7 +401,11 @@ function LeagueView({ token, userId, league, onBack }) {
         headers: { ...auth, 'Content-Type': 'application/json' },
         body: JSON.stringify({ outcome }),
       })
-      await Promise.all([loadPredictions(), loadLeaderboard()])
+      await Promise.all([
+        loadPredictions(),
+        loadLeaderboard(),
+        loadDetail(predictionId),
+      ])
     } catch (err) {
       setError(err.message)
     }
@@ -398,7 +442,22 @@ function LeagueView({ token, userId, league, onBack }) {
                 style={{ border: '1px solid #ccc', padding: 8 }}
               >
                 <div>
-                  <strong>{p.question}</strong>{' '}
+                  <button
+                    onClick={() => toggleDetail(p.id)}
+                    data-testid="toggle-picks"
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                      font: 'inherit',
+                      fontWeight: 700,
+                      textDecoration: 'underline',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                    }}
+                  >
+                    {p.question}
+                  </button>{' '}
                   <em>
                     ({p.status}
                     {p.resolved_outcome ? `, resolved ${p.resolved_outcome.toUpperCase()}` : ''})
@@ -407,6 +466,23 @@ function LeagueView({ token, userId, league, onBack }) {
                 <div data-testid="prediction-counts">
                   Yes: {p.yes_count} · No: {p.no_count}
                 </div>
+                {expanded === p.id && details[p.id] && (
+                  <div data-testid="picks-detail" style={{ marginTop: 6 }}>
+                    {details[p.id].picks_visible ? (
+                      <ul style={{ margin: '4px 0', paddingLeft: '1.2rem' }}>
+                        {details[p.id].picks.map((pick) => (
+                          <li key={pick.id} data-testid="pick-item">
+                            {pick.nickname} — {pick.side.toUpperCase()} (stake {pick.stake})
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p style={{ margin: '4px 0', fontStyle: 'italic' }}>
+                        Make your pick to see what everyone chose.
+                      </p>
+                    )}
+                  </div>
+                )}
                 {p.status === 'open' && (
                   <form
                     onSubmit={(e) => handlePick(e, p.id)}
@@ -453,7 +529,7 @@ function LeagueView({ token, userId, league, onBack }) {
             <tbody>
               {leaderboard.map((e) => (
                 <tr key={e.user_id}>
-                  <td style={{ padding: '2px 12px 2px 0' }}>{e.email}</td>
+                  <td style={{ padding: '2px 12px 2px 0' }}>{e.nickname}</td>
                   <td style={{ padding: '2px 12px 2px 0' }}>{e.points}</td>
                   <td style={{ padding: '2px 12px 2px 0' }}>
                     {e.correct}/{e.total}

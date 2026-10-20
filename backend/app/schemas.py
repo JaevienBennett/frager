@@ -1,12 +1,24 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Credentials(BaseModel):
     email: str
     password: str
+
+
+class SignupRequest(Credentials):
+    nickname: str = Field(min_length=2, max_length=24)
+
+    @field_validator("nickname")
+    @classmethod
+    def nickname_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 2:
+            raise ValueError("nickname must be 2-24 characters")
+        return value
 
 
 class Token(BaseModel):
@@ -17,6 +29,7 @@ class Token(BaseModel):
 class UserOut(BaseModel):
     id: int
     email: str
+    nickname: str
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -61,15 +74,15 @@ class PickCreate(BaseModel):
 class PickOut(BaseModel):
     id: int
     user_id: int
+    nickname: str
     side: str
     stake: int
     created_at: datetime
 
-    model_config = {"from_attributes": True}
-
 
 class PredictionDetail(PredictionOut):
     picks: list[PickOut]
+    picks_visible: bool
 
 
 class ResolveRequest(BaseModel):
@@ -78,7 +91,7 @@ class ResolveRequest(BaseModel):
 
 class LeaderboardEntry(BaseModel):
     user_id: int
-    email: str
+    nickname: str
     points: int
     correct: int
     total: int
