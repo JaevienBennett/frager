@@ -40,8 +40,8 @@
   --shadow: 0 1px 2px rgba(17, 24, 39, 0.05), 0 1px 3px rgba(17, 24, 39, 0.07);
 
   /* Typography */
-  --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
-    sans-serif;
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
 }
 
 * {
@@ -65,13 +65,95 @@ p {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .container {
   max-width: 720px;
   margin: 0 auto;
   padding: var(--space-6) var(--space-4);
+}
+
+.center {
+  text-align: center;
+}
+
+/* ------------------------------------------------------------
+   Header & brand
+   ------------------------------------------------------------ */
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 3px rgba(17, 24, 39, 0.05);
+}
+
+.header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 10px var(--space-4);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.header-user {
+  max-width: 190px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.brand .logo {
+  display: block;
+  flex: 0 0 auto;
+}
+
+.brand-hero {
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 var(--space-4);
+  text-align: center;
+}
+
+.wordmark {
+  margin: 0;
+  color: var(--accent);
+  font-size: 1.3rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.brand-hero .wordmark {
+  font-size: 2.1rem;
+  letter-spacing: -0.04em;
+}
+
+.btn-sm {
+  padding: 6px 11px;
+  font-size: 0.8rem;
 }
 
 .stack {
@@ -101,6 +183,14 @@ p {
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: var(--space-4);
+  transition: box-shadow 0.15s ease, transform 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.card:hover,
+.panel:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(17, 24, 39, 0.09);
 }
 
 .auth-card {
@@ -122,32 +212,25 @@ p {
    Headings & text helpers
    ------------------------------------------------------------ */
 
-.app-title {
-  margin: 0 0 var(--space-5);
-  font-size: 1.75rem;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  color: var(--text);
-}
-
 h2.section-title {
   margin: 0;
-  font-size: 1.3rem;
+  font-size: 1.4rem;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 
 h3.section-title {
   margin: 0;
-  font-size: 1.15rem;
+  font-size: 1.2rem;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
 }
 
 h4.section-title {
   margin: 0;
-  font-size: 1rem;
+  font-size: 1.02rem;
   font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .muted {
@@ -173,13 +256,6 @@ h4.section-title {
   color: var(--success);
   font-weight: 600;
   margin: 0;
-}
-
-.user-status {
-  margin: 0;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--muted);
 }
 
 .code {
@@ -210,7 +286,7 @@ h4.section-title {
   white-space: nowrap;
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease,
-    color 0.15s ease;
+    color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .btn:disabled {
@@ -225,6 +301,8 @@ h4.section-title {
 
 .btn-primary:hover:not(:disabled) {
   background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(109, 40, 217, 0.28);
 }
 
 .btn-secondary {
@@ -341,6 +419,54 @@ h4.section-title {
   width: 70px;
 }
 
+/* Segmented YES/NO control */
+
+.segmented {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.segment {
+  padding: 5px 14px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius) - 4px);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.segment:hover:not(.active) {
+  background: var(--card);
+  color: var(--text);
+}
+
+.segment:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.segment.active.segment-yes {
+  background: var(--success-soft);
+  border-color: rgba(22, 163, 74, 0.4);
+  color: var(--success);
+}
+
+.segment.active.segment-no {
+  background: var(--danger-soft);
+  border-color: rgba(220, 38, 38, 0.4);
+  color: var(--danger);
+}
+
 /* ------------------------------------------------------------
    Badges & pills
    ------------------------------------------------------------ */
@@ -380,6 +506,7 @@ h4.section-title {
   font-size: 0.85rem;
   font-weight: 800;
   letter-spacing: 0.03em;
+  animation: pop 0.28s ease-out both;
 }
 
 .outcome-yes {
@@ -420,6 +547,43 @@ h4.section-title {
   color: var(--danger);
 }
 
+/* Wager chips */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid rgba(109, 40, 217, 0.14);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.65;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+.coin {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  opacity: 0.5;
+}
+
+.chip-sm {
+  padding: 0 6px;
+  font-size: 0.75rem;
+}
+
+.mypick .chip {
+  background: var(--card);
+}
+
 /* ------------------------------------------------------------
    Lists
    ------------------------------------------------------------ */
@@ -430,6 +594,21 @@ h4.section-title {
   padding: 0;
   display: grid;
   gap: var(--space-2);
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-4);
+  color: var(--muted);
+  text-align: center;
+}
+
+.empty-icon {
+  font-size: 1.7rem;
+  line-height: 1;
 }
 
 .list-item {
@@ -497,8 +676,12 @@ h4.section-title {
 }
 
 .swing {
+  display: inline-block;
   margin-left: var(--space-1);
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
   font-weight: 700;
+  animation: swing-pulse 0.5s ease-out both;
 }
 
 .ok {
@@ -571,9 +754,52 @@ h4.section-title {
   text-align: right;
 }
 
+.table .rank {
+  width: 42px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.table tbody td.rank {
+  font-size: 1rem;
+}
+
 .table th:last-child,
 .table td:last-child {
   padding-right: 0;
+}
+
+/* ------------------------------------------------------------
+   Motion
+   ------------------------------------------------------------ */
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes swing-pulse {
+  0% {
+    transform: scale(1);
+    background: transparent;
+  }
+  40% {
+    transform: scale(1.16);
+    background: rgba(109, 40, 217, 0.1);
+  }
+  100% {
+    transform: scale(1);
+    background: transparent;
+  }
 }
 
 /* ------------------------------------------------------------
@@ -585,8 +811,16 @@ h4.section-title {
     padding: var(--space-4) var(--space-3);
   }
 
-  .app-title {
-    font-size: 1.5rem;
+  .header-inner {
+    padding: 10px var(--space-3);
+  }
+
+  .header-user {
+    max-width: 120px;
+  }
+
+  .brand-hero .wordmark {
+    font-size: 1.8rem;
   }
 
   .auth-card {
@@ -601,5 +835,22 @@ h4.section-title {
   .form-row .input,
   .form-row .select {
     flex: 1 1 140px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .card:hover,
+  .panel:hover,
+  .btn-primary:hover:not(:disabled) {
+    transform: none;
   }
 }

@@ -4,7 +4,94 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
-## Milestone 11 — Visual polish (light theme, indigo/violet accent) [presentation only]
+## Milestone 12 — Visual identity & game feel (presentation only) [no logic changes]
+
+```
+Give Frager real personality so it feels like a fun social prediction game, not just a
+styled form. VISUAL ONLY — do NOT change fetch calls, state, handlers, routing, text
+logic, or behavior. Same features; richer skin. No new npm dependencies.
+
+Scope: signup/login, header, leagues list, league view (predictions + picks + resolve +
+results), leaderboard. Keep responsive to ~360px.
+
+1. BRAND MARK + WORDMARK
+   - Create a small inline SVG logo component (a simple, bold mark — e.g. a coin/dice or a
+     yes/no toggle glyph) in violet (var(--accent)). Give it a compact, recognisable shape;
+     keep it ~24–28px. Render a wordmark "Frager" in a heavier weight beside it.
+   - Reuse it in the header and on the auth screen.
+
+2. APP HEADER BAR
+   - Add a slim top header (sticky) across the authed app: logo + "Frager" on the left,
+     and on the right the user's nickname plus a Logout button (btn-secondary, small).
+   - White surface, bottom border (var(--border)), subtle shadow. Container stays centered,
+     max-width ~720px inside it.
+   - On the auth screen, keep a centered card but include the logo/wordmark above the form.
+
+3. YES/NO SEGMENTED TOGGLE (replaces the side <select>)
+   - Replace the pick side dropdown with a two-button segmented control: YES and NO.
+   - Selected button: YES = success-tinted (green), NO = danger-tinted (red); unselected =
+     neutral. Must remain keyboard-accessible (role="group", aria-pressed on each button)
+     and preserve the SAME state shape (form.side = 'yes' | 'no') and the same submit shape.
+   - This is the only interaction change: clicking a segment sets the side instead of
+     choosing from a select. Keep the stake input and Pick button in the same row.
+
+4. WAGER CHIPS
+   - Render stakes as a chip/coin pill wherever a stake is shown (the "N pts" next to
+     picks, your own-pick marker, and the counts line). Use a small coin glyph (SVG or ●)
+     + number, styled as a rounded pill with a soft violet tint (reuse --accent-soft).
+   - Keep the raw number visible; do not change any values or math.
+
+5. LEADERBOARD MEDALS + RANKS
+   - Add a leading "#" rank column (1-based by the existing order) and show a medal for the
+     top three: gold 🥇 / silver 🥈 / bronze 🥉 (or SVG medals with matching tinted circles).
+     Rank 4+ shows the plain number.
+   - Keep existing sort order and columns (Member, Points, Record, Accuracy). Your own row
+     stays highlighted (.me).
+
+6. RESULT "JUICE" (CSS-only, no logic)
+   - When a prediction is resolved, animate the outcome banner in with a small pop/scale
+     (e.g. @keyframes pop { from { transform: scale(.96); opacity: 0 } to { transform:
+     scale(1); opacity: 1 } }), respecting prefers-reduced-motion (disable animation).
+   - On a pick's point swing, add a subtle emphasis (brief highlight/scale) via a CSS
+     animation. Do NOT implement a JS counter — a CSS pulse is enough; leave the number
+     text unchanged.
+   - Add a gentle hover lift (translateY(-1px) + slightly stronger shadow) on cards and
+     primary buttons. Respect prefers-reduced-motion.
+
+7. EMPTY STATES
+   - Leagues list when empty: friendly card with a line like "No leagues yet — create one
+     and invite friends." plus the create form.
+   - League view when there are no predictions: "No predictions yet. Post the first one!"
+     Keep it short and warm (light, playful tone is fine).
+   - Do not invent features; these are just copy + a small SVG/emoji accent.
+
+8. ACCENT COHERENCE + TYPOGRAPHY
+   - Use the violet accent consistently for the wordmark, links, focus rings, active/selected
+     states, and section accents. Keep body text/neutrals calm (don't over-violet the page).
+   - Load Inter via @font-face using a Google Fonts <link>? NO — do not add network fonts
+     (avoids a dependency and FOUC). Instead set --font to a modern system stack:
+     "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif
+     (so it uses Inter if the OS has it, otherwise a clean fallback). Improve the type scale
+     (clearer h1/h2 sizes, line-height, letter-spacing on section titles).
+
+Constraints:
+  - Preserve every text string EXCEPT where this milestone explicitly adds empty-state copy
+    and injects goals (header/logout uses the existing nickname + logout handler).
+  - Preserve all data-testid attributes and conditional logic.
+  - The ONLY behavioral change permitted is the side selector becoming a segmented toggle
+    (same state value, same submit payload).
+  - No backend changes. No new npm dependencies. No network font loading.
+  - Respect prefers-reduced-motion for all animations.
+
+Verify: npm run build succeeds. Report: files changed, build output, the new look in words,
+and explicitly confirm (a) the pick submit payload is unchanged ({side, stake}), (b) no
+fetch/state/handler logic changed beyond the side toggle, (c) all data-testids intact.
+Do not start long-running servers.
+```
+
+---
+
+## Milestone 11 — Visual polish (light theme, indigo/violet accent) (DONE)
 
 ```
 Make the Frager UI look clean, modern, and pleasant. VISUAL ONLY — do not change any

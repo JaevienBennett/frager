@@ -67,6 +67,38 @@ function findMyPick(detail, userId) {
   return detail.picks.find((pk) => pk.user_id === userId) || null
 }
 
+function Logo({ size = 26 }) {
+  return (
+    <svg
+      className="logo"
+      width={size}
+      height={size}
+      viewBox="0 0 32 32"
+      role="img"
+      aria-label="Frager logo"
+    >
+      <rect x="1" y="1" width="30" height="30" rx="9" fill="var(--accent)" />
+      <path
+        d="M9.5 16.5l4.4 4.4 8.9-9.6"
+        fill="none"
+        stroke="#ffffff"
+        strokeWidth="3.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function Brand({ hero = false }) {
+  return (
+    <div className={hero ? 'brand brand-hero' : 'brand'}>
+      <Logo size={hero ? 34 : 26} />
+      <h1 className="wordmark">Frager</h1>
+    </div>
+  )
+}
+
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY))
   const [user, setUser] = useState(null)
@@ -131,70 +163,86 @@ export default function App() {
   }
 
   return (
-    <main className="app">
-      <div className="container">
-        <h1 className="app-title">Frager</h1>
-
-        {booting ? (
-          <p className="muted">{WAKING_UP}</p>
-        ) : user ? (
-          <section className="stack">
-            <div className="row between">
-              <p className="user-status" data-testid="user-status">
+    <div className="app">
+      {user && (
+        <header className="header">
+          <div className="header-inner">
+            <Brand />
+            <div className="header-right">
+              <span className="header-user" data-testid="user-status">
                 Logged in as {user.nickname}
-              </p>
-              <button className="btn btn-secondary" onClick={logout}>
+              </span>
+              <button className="btn btn-secondary btn-sm" onClick={logout}>
                 Log out
               </button>
             </div>
-            <Leagues token={token} userId={user.id} />
-          </section>
-        ) : (
-          <form className="card form auth-card" onSubmit={submit}>
-            <h2 className="section-title">{mode === 'login' ? 'Log in' : 'Sign up'}</h2>
-            <input
-              className="input"
-              type="email"
-              placeholder="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
-            {mode === 'signup' && (
-              <input
-                className="input"
-                placeholder="nickname (2-24 chars)"
-                value={nickname}
-                onChange={(e) => setNickname(e.target.value)}
-                required
-                minLength={2}
-                maxLength={24}
-              />
-            )}
-            <input
-              className="input"
-              type="password"
-              placeholder="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-            <button type="submit" className="btn btn-primary">
-              {mode === 'login' ? 'Log in' : 'Sign up'}
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => setMode(mode === 'login' ? 'signup' : 'login')}
-            >
-              {mode === 'login' ? 'Need an account? Sign up' : 'Have an account? Log in'}
-            </button>
-          </form>
-        )}
+          </div>
+        </header>
+      )}
 
-        {error && <p className="error">{error}</p>}
-      </div>
-    </main>
+      <main>
+        <div className="container">
+          {booting ? (
+            <>
+              <Brand hero />
+              <p className="muted center">{WAKING_UP}</p>
+            </>
+          ) : user ? (
+            <section className="stack">
+              <Leagues token={token} userId={user.id} />
+            </section>
+          ) : (
+            <>
+              <Brand hero />
+              <form className="card form auth-card" onSubmit={submit}>
+                <h2 className="section-title">
+                  {mode === 'login' ? 'Log in' : 'Sign up'}
+                </h2>
+                <input
+                  className="input"
+                  type="email"
+                  placeholder="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+                {mode === 'signup' && (
+                  <input
+                    className="input"
+                    placeholder="nickname (2-24 chars)"
+                    value={nickname}
+                    onChange={(e) => setNickname(e.target.value)}
+                    required
+                    minLength={2}
+                    maxLength={24}
+                  />
+                )}
+                <input
+                  className="input"
+                  type="password"
+                  placeholder="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+                <button type="submit" className="btn btn-primary">
+                  {mode === 'login' ? 'Log in' : 'Sign up'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setMode(mode === 'login' ? 'signup' : 'login')}
+                >
+                  {mode === 'login' ? 'Need an account? Sign up' : 'Have an account? Log in'}
+                </button>
+              </form>
+            </>
+          )}
+
+          {error && <p className="error">{error}</p>}
+        </div>
+      </main>
+    </div>
   )
 }
 
@@ -294,6 +342,13 @@ function Leagues({ token, userId }) {
 
       {!loaded ? (
         <p className="muted">{WAKING_UP}</p>
+      ) : leagues.length === 0 ? (
+        <div className="card empty-state">
+          <span className="empty-icon" aria-hidden="true">
+            🎲
+          </span>
+          <p>No leagues yet — create one and invite friends.</p>
+        </div>
       ) : (
         <ul className="league-list">
           {leagues.map((l) => (
@@ -519,7 +574,15 @@ function LeagueView({ token, userId, league, onBack }) {
         <p className="muted">{WAKING_UP}</p>
       ) : (
         <>
-          <ul className="cards">
+          {predictions.length === 0 ? (
+            <div className="card empty-state">
+              <span className="empty-icon" aria-hidden="true">
+                🎯
+              </span>
+              <p>No predictions yet. Post the first one!</p>
+            </div>
+          ) : (
+            <ul className="cards">
             {predictions.map((p) => (
               <li
                 key={p.id}
@@ -555,7 +618,16 @@ function LeagueView({ token, userId, league, onBack }) {
                 <div className="counts muted" data-testid="prediction-counts">
                   {p.yes_count + p.no_count} pick
                   {p.yes_count + p.no_count === 1 ? '' : 's'} · {p.yes_count} said Yes (
-                  {p.yes_stake} pts) · {p.no_count} said No ({p.no_stake} pts)
+                  <span className="chip chip-sm">
+                    <span className="coin" aria-hidden="true" />
+                    {p.yes_stake}
+                  </span>{' '}
+                  pts) · {p.no_count} said No (
+                  <span className="chip chip-sm">
+                    <span className="coin" aria-hidden="true" />
+                    {p.no_stake}
+                  </span>{' '}
+                  pts)
                 </div>
                 {(() => {
                   const mine = findMyPick(details[p.id], userId)
@@ -569,7 +641,11 @@ function LeagueView({ token, userId, league, onBack }) {
                       >
                         {mine.side.toUpperCase()}
                       </span>{' '}
-                      ({mine.stake} pts)
+                      <span className="chip chip-sm">
+                        <span className="coin" aria-hidden="true" />
+                        {mine.stake}
+                      </span>{' '}
+                      pts
                     </div>
                   ) : null
                 })()}
@@ -619,14 +695,28 @@ function LeagueView({ token, userId, league, onBack }) {
                 )}
                 {p.status === 'open' && (
                   <form className="form-row" onSubmit={(e) => handlePick(e, p.id)}>
-                    <select
-                      className="select"
-                      value={(picks[p.id] || {}).side || 'yes'}
-                      onChange={(e) => updatePickForm(p.id, 'side', e.target.value)}
-                    >
-                      <option value="yes">Yes</option>
-                      <option value="no">No</option>
-                    </select>
+                    <div className="segmented" role="group" aria-label="Pick a side">
+                      <button
+                        type="button"
+                        className={`segment segment-yes ${
+                          ((picks[p.id] || {}).side || 'yes') === 'yes' ? 'active' : ''
+                        }`}
+                        aria-pressed={((picks[p.id] || {}).side || 'yes') === 'yes'}
+                        onClick={() => updatePickForm(p.id, 'side', 'yes')}
+                      >
+                        Yes
+                      </button>
+                      <button
+                        type="button"
+                        className={`segment segment-no ${
+                          ((picks[p.id] || {}).side || 'yes') === 'no' ? 'active' : ''
+                        }`}
+                        aria-pressed={((picks[p.id] || {}).side || 'yes') === 'no'}
+                        onClick={() => updatePickForm(p.id, 'side', 'no')}
+                      >
+                        No
+                      </button>
+                    </div>
                     <input
                       className="input stake"
                       type="number"
@@ -664,7 +754,8 @@ function LeagueView({ token, userId, league, onBack }) {
                 )}
               </li>
             ))}
-          </ul>
+            </ul>
+          )}
 
           <div className="card leaderboard">
             <h4 className="section-title">Leaderboard</h4>
@@ -672,6 +763,7 @@ function LeagueView({ token, userId, league, onBack }) {
               <table className="table" data-testid="leaderboard">
                 <thead>
                   <tr>
+                    <th className="rank">#</th>
                     <th>Member</th>
                     <th className="num">Points</th>
                     <th className="num" title="Record (correct / total picks)">
@@ -681,21 +773,27 @@ function LeagueView({ token, userId, league, onBack }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {leaderboard.map((e) => (
-                    <tr
-                      key={e.user_id}
-                      className={e.user_id === userId ? 'me' : undefined}
-                    >
-                      <td>{e.nickname}</td>
-                      <td className="num">{e.points}</td>
-                      <td className="num">
-                        {e.correct}/{e.total}
-                      </td>
-                      <td className="num">
-                        {(e.accuracy * 100).toFixed(0)}%
-                      </td>
-                    </tr>
-                  ))}
+                  {leaderboard.map((e, idx) => {
+                    const rank = idx + 1
+                    const medal =
+                      rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : null
+                    return (
+                      <tr
+                        key={e.user_id}
+                        className={e.user_id === userId ? 'me' : undefined}
+                      >
+                        <td className="rank">{medal ?? rank}</td>
+                        <td>{e.nickname}</td>
+                        <td className="num">{e.points}</td>
+                        <td className="num">
+                          {e.correct}/{e.total}
+                        </td>
+                        <td className="num">
+                          {(e.accuracy * 100).toFixed(0)}%
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
