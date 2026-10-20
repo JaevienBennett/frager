@@ -122,6 +122,7 @@ function Leagues({ token }) {
   const [name, setName] = useState('')
   const [joinCode, setJoinCode] = useState('')
   const [newLeague, setNewLeague] = useState(null)
+  const [selected, setSelected] = useState(null)
   const [error, setError] = useState('')
 
   const auth = { Authorization: `Bearer ${token}` }
@@ -210,9 +211,151 @@ function Leagues({ token }) {
 
       <ul style={{ paddingLeft: '1.2rem' }}>
         {leagues.map((l) => (
-          <li key={l.id} data-testid="league-item">
-            {l.name} — {l.member_count} member{l.member_count === 1 ? '' : 's'} · code{' '}
+          <li key={l.id} data-testid="league-item" style={{ marginBottom: 4 }}>
+            <button
+              onClick={() => setSelected(l)}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                font: 'inherit',
+                textDecoration: 'underline',
+                cursor: 'pointer',
+              }}
+            >
+              {l.name}
+            </button>{' '}
+            — {l.member_count} member{l.member_count === 1 ? '' : 's'} · code{' '}
             <code>{l.invite_code}</code>
+          </li>
+        ))}
+      </ul>
+
+      {error && <p style={{ color: 'crimson' }}>{error}</p>}
+
+      {selected && (
+        <LeagueView token={token} league={selected} onBack={() => setSelected(null)} />
+      )}
+    </section>
+  )
+}
+
+function LeagueView({ token, league, onBack }) {
+  const [predictions, setPredictions] = useState([])
+  const [question, setQuestion] = useState('')
+  const [error, setError] = useState('')
+  const [picks, setPicks] = useState({})
+
+  const auth = { Authorization: `Bearer ${token}` }
+
+  const loadPredictions = useCallback(async () => {
+    const res = await fetch(`${API}/api/leagues/${league.id}/predictions`, {
+      headers: auth,
+    })
+    if (res.ok) setPredictions(await res.json())
+    else setError((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`)
+  }, [league.id, token])
+
+  useEffect(() => {
+    loadPredictions()
+  }, [loadPredictions])
+
+  function updatePickForm(predictionId, field, value) {
+    setPicks((prev) => ({
+      ...prev,
+      [predictionId]: { side: 'yes', stake: 0, ...prev[predictionId], [field]: value },
+    }))
+  }
+
+  async function handlePost(e) {
+    e.preventDefault()
+    setError('')
+    try {
+      const res = await fetch(`${API}/api/leagues/${league.id}/predictions`, {
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.detail || `HTTP ${res.status}`)
+      }
+      setQuestion('')
+      await loadPredictions()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function handlePick(e, predictionId) {
+    e.preventDefault()
+    setError('')
+    const form = picks[predictionId] || { side: 'yes', stake: 0 }
+    try {
+      const res = await fetch(`${API}/api/predictions/${predictionId}/pick`, {
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ side: form.side, stake: Number(form.stake) || 0 }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.detail || `HTTP ${res.status}`)
+      }
+      await loadPredictions()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  return (
+    <section
+      data-testid="league-view"
+      style={{ marginTop: '1rem', borderTop: '1px solid #999', paddingTop: '0.5rem' }}
+    >
+      <button onClick={onBack}>← Back to leagues</button>
+      <h3>{league.name}</h3>
+
+      <form onSubmit={handlePost} style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <input
+          placeholder="Ask a yes/no question…"
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          required
+          style={{ flex: 1 }}
+        />
+        <button type="submit">Post prediction</button>
+      </form>
+
+      <ul style={{ listStyle: 'none', padding: 0, display: 'grid', gap: 12 }}>
+        {predictions.map((p) => (
+          <li key={p.id} data-testid="prediction-item" style={{ border: '1px solid #ccc', padding: 8 }}>
+            <div>
+              <strong>{p.question}</strong> <em>({p.status})</em>
+            </div>
+            <div data-testid="prediction-counts">
+              Yes: {p.yes_count} · No: {p.no_count}
+            </div>
+            <form
+              onSubmit={(e) => handlePick(e, p.id)}
+              style={{ display: 'flex', gap: 8, marginTop: 6 }}
+            >
+              <select
+                value={(picks[p.id] || {}).side || 'yes'}
+                onChange={(e) => updatePickForm(p.id, 'side', e.target.value)}
+              >
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+              <input
+                type="number"
+                min="0"
+                placeholder="stake"
+                value={(picks[p.id] || {}).stake ?? 0}
+                onChange={(e) => updatePickForm(p.id, 'stake', e.target.value)}
+                style={{ width: 70 }}
+              />
+              <button type="submit">Pick</button>
+            </form>
           </li>
         ))}
       </ul>

@@ -3,6 +3,7 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from .membership import is_member
 from .models import League, Membership, User
 from .schemas import JoinRequest, LeagueCreate, LeagueOut
 from .security import get_current_user, get_db
@@ -73,14 +74,8 @@ def get_league(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    is_member = (
-        db.query(Membership)
-        .filter(Membership.league_id == league_id, Membership.user_id == user.id)
-        .first()
-        is not None
-    )
     league = db.get(League, league_id)
-    if league is None or not is_member:
+    if league is None or not is_member(db, league_id, user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="League not found")
     return league_out(db, league)
 

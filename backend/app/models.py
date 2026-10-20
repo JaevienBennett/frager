@@ -60,3 +60,42 @@ class Membership(Base):
 
     league: Mapped["League"] = relationship(back_populates="memberships")
     user: Mapped["User"] = relationship(back_populates="memberships")
+
+
+class Prediction(Base):
+    __tablename__ = "predictions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(
+        ForeignKey("leagues.id"), nullable=False, index=True
+    )
+    creator_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    question: Mapped[str] = mapped_column(String(500), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="open", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+    picks: Mapped[list["Pick"]] = relationship(back_populates="prediction")
+
+
+class Pick(Base):
+    __tablename__ = "picks"
+    __table_args__ = (UniqueConstraint("prediction_id", "user_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    prediction_id: Mapped[int] = mapped_column(
+        ForeignKey("predictions.id"), nullable=False, index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    side: Mapped[str] = mapped_column(String(8), nullable=False)
+    stake: Mapped[int] = mapped_column(nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+    prediction: Mapped["Prediction"] = relationship(back_populates="picks")

@@ -4,7 +4,59 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
-## Milestone 2 — Leagues (create, invite, join)
+## Milestone 3 — Predictions (post yes/no, pick a side, optional points)
+
+```
+Add predictions to Frager. This is Milestone 3. Auth (M1) and leagues (M2) exist —
+reuse get_current_user, get_db, and the membership helper/pattern. Do NOT add
+resolution or leaderboard logic yet (that is Milestone 4); a prediction can be
+created and people can make picks, but nothing is settled in this milestone.
+
+Backend (FastAPI):
+1. Add models in app/models.py:
+   - Prediction: id (int PK), league_id (FK -> leagues.id, not null, indexed),
+     creator_id (FK -> users.id, not null), question (string, not null),
+     status (string, default "open"), created_at (datetime).
+   - Pick: id (int PK), prediction_id (FK -> predictions.id, not null, indexed),
+     user_id (FK -> users.id, not null), side (string: "yes" or "no", not null),
+     stake (int, default 0, not null), created_at (datetime).
+     Add a UNIQUE constraint on (prediction_id, user_id) — one pick per user.
+2. Rules:
+   - Only members of a league may create a prediction in it or make picks in it.
+     Reuse the membership check from routes_leagues.
+   - stake must be >= 0. Use integer points for now.
+   - side must be exactly "yes" or "no" (reject anything else with 422/400).
+3. New APIRouter (prefix /api), all endpoints require authentication:
+   - POST /api/leagues/{league_id}/predictions   { question } -> create (members only)
+   - GET  /api/leagues/{league_id}/predictions   -> list predictions in the league
+     (members only), each with id, question, status, creator_id, created_at, and
+     counts: yes_count, no_count.
+   - POST /api/predictions/{prediction_id}/pick  { side, stake } -> create/replace
+     the caller's pick. 404 if prediction unknown or caller not a league member.
+     If the caller already picked, update it (200) rather than error.
+   - GET  /api/predictions/{prediction_id}       -> prediction detail with its picks
+     (members only).
+4. Add Pydantic schemas (PredictionCreate, PredictionOut, PickCreate, PickOut).
+
+Frontend (React):
+5. Inside a selected league (click a league to "open" it), show:
+   - A form to post a new prediction (question).
+   - A list of the league's predictions with Yes/No counts.
+   - On each prediction, a way to pick a side and enter an optional point stake.
+6. Keep auth, leagues list, and health indicator working.
+
+IMPORTANT: actually CREATE the new tables — update create_tables.py, RUN it against
+DATABASE_URL, and confirm predictions and picks exist.
+
+Report back: files changed/created with full contents, exact run commands, and proof
+(create prediction, two users pick, duplicate pick updates, non-member blocked,
+bad side rejected) with the curl commands. Create and delete proof data afterward.
+Do not start long-running servers.
+```
+
+---
+
+## Milestone 2 — Leagues (DONE)
 
 ```
 Add leagues to Frager. This is Milestone 2. Auth (Milestone 1) already exists —

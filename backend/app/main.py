@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import database  # noqa: F401
 from .routes_auth import router as auth_router
 from .routes_leagues import router as leagues_router
+from .routes_predictions import router as predictions_router
 
 app = FastAPI(title="Frager")
 
@@ -17,6 +18,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(leagues_router)
+app.include_router(predictions_router)
 
 
 @app.get("/api/health")

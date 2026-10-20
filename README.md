@@ -10,10 +10,13 @@ frager/
 │   ├── app/
 │   │   ├── main.py        FastAPI app + CORS + /api/health
 │   │   ├── database.py    SQLAlchemy engine/session + Base
-│   │   ├── models.py      User model
+│   │   ├── models.py      User, League, Membership, Prediction, Pick
 │   │   ├── schemas.py     Pydantic request/response models
 │   │   ├── security.py    password hashing, JWT, get_current_user, get_db
-│   │   └── routes_auth.py /api/auth/signup|login|me
+│   │   ├── membership.py  is_member / require_member helpers
+│   │   ├── routes_auth.py /api/auth/signup|login|me
+│   │   ├── routes_leagues.py /api/leagues...
+│   │   └── routes_predictions.py /api/leagues/{id}/predictions, /api/predictions/...
 │   ├── create_tables.py   create_all (runs against DATABASE_URL)
 │   ├── requirements.txt
 │   └── .env.example
@@ -77,3 +80,7 @@ Credentials are never hardcoded in the source.
 | GET    | `/api/leagues`        | Bearer | —                   | 200 list of the user's leagues | 401 |
 | GET    | `/api/leagues/{id}`   | Bearer | —                   | 200 league (members only) | 404 non-member/unknown |
 | POST   | `/api/leagues/join`   | Bearer | `{invite_code}`     | 200 league, joined | 404 unknown code, 409 already a member |
+| POST   | `/api/leagues/{id}/predictions`   | Bearer | `{question}` | 201 prediction | 404 non-member |
+| GET    | `/api/leagues/{id}/predictions`   | Bearer | —           | 200 list with `yes_count`/`no_count` | 404 non-member |
+| POST   | `/api/predictions/{id}/pick`      | Bearer | `{side, stake}` | 201 new / 200 updated | 404 unknown/non-member, 422 bad side/stake |
+| GET    | `/api/predictions/{id}`           | Bearer | —           | 200 detail with picks | 404 non-member |
