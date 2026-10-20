@@ -80,6 +80,7 @@ class PickOut(BaseModel):
     side: str
     stake: int
     created_at: datetime
+    was_correct: bool | None = None
 
 
 class PredictionDetail(PredictionOut):

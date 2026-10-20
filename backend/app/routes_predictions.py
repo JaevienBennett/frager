@@ -17,7 +17,9 @@ from .security import get_current_user, get_db
 router = APIRouter(prefix="/api", tags=["predictions"])
 
 
-def pick_out(pick: Pick, nickname: str) -> PickOut:
+def pick_out(
+    pick: Pick, nickname: str, was_correct: bool | None = None
+) -> PickOut:
     return PickOut(
         id=pick.id,
         user_id=pick.user_id,
@@ -25,6 +27,7 @@ def pick_out(pick: Pick, nickname: str) -> PickOut:
         side=pick.side,
         stake=pick.stake,
         created_at=pick.created_at,
+        was_correct=was_correct,
     )
 
 
@@ -145,8 +148,17 @@ def get_prediction(
             u.id: u.nickname
             for u in db.query(User).filter(User.id.in_(picker_ids)).all()
         }
+        resolved = prediction.status == "resolved"
         detail["picks"] = [
-            pick_out(p, nicknames.get(p.user_id, f"user-{p.user_id}"))
+            pick_out(
+                p,
+                nicknames.get(p.user_id, f"user-{p.user_id}"),
+                (
+                    p.side == prediction.resolved_outcome
+                    if resolved
+                    else None
+                ),
+            )
             for p in prediction.picks
         ]
     else:

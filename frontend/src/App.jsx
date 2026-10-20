@@ -479,11 +479,20 @@ function LeagueView({ token, userId, league, onBack }) {
                   >
                     {p.question}
                   </button>{' '}
-                  <em>
-                    ({p.status}
-                    {p.resolved_outcome ? `, resolved ${p.resolved_outcome.toUpperCase()}` : ''})
-                  </em>
+                  <em>({p.status})</em>
                 </div>
+                {p.status === 'resolved' && (
+                  <div
+                    data-testid="outcome-banner"
+                    style={{
+                      fontWeight: 700,
+                      marginTop: 2,
+                      color: p.resolved_outcome === 'yes' ? '#137333' : '#c5221f',
+                    }}
+                  >
+                    Resolved: {String(p.resolved_outcome).toUpperCase()}
+                  </div>
+                )}
                 <div data-testid="prediction-counts">
                   {p.yes_count + p.no_count} pick
                   {p.yes_count + p.no_count === 1 ? '' : 's'} · {p.yes_count} said Yes (
@@ -493,17 +502,49 @@ function LeagueView({ token, userId, league, onBack }) {
                   <div data-testid="picks-detail" style={{ marginTop: 6 }}>
                     {details[p.id].picks_visible ? (
                       <ul style={{ margin: '4px 0', paddingLeft: '1.2rem' }}>
-                        {details[p.id].picks.map((pick) => (
-                          <li key={pick.id} data-testid="pick-item">
-                            {pick.nickname} — {pick.side.toUpperCase()} (stake {pick.stake})
-                          </li>
-                        ))}
+                        {details[p.id].picks.map((pick) => {
+                          const correct = pick.was_correct
+                          const swing =
+                            correct === null || correct === undefined
+                              ? null
+                              : correct
+                                ? `+${pick.stake}`
+                                : `-${pick.stake}`
+                          const mine = pick.user_id === userId
+                          return (
+                            <li
+                              key={pick.id}
+                              data-testid="pick-item"
+                              style={mine ? { fontWeight: 700 } : undefined}
+                            >
+                              {pick.nickname} — {pick.side.toUpperCase()} (stake{' '}
+                              {pick.stake})
+                              {swing && (
+                                <span
+                                  style={{
+                                    color: correct ? '#137333' : '#c5221f',
+                                    marginLeft: 4,
+                                  }}
+                                >
+                                  {correct ? '✓' : '✗'} {swing}
+                                </span>
+                              )}
+                              {swing && mine && (
+                                <span style={{ color: correct ? '#137333' : '#c5221f' }}>
+                                  {' '}
+                                  — that's you: {correct ? 'you were right!' : 'wrong'} (
+                                  {swing})
+                                </span>
+                              )}
+                            </li>
+                          )
+                        })}
                       </ul>
-                    ) : (
+                    ) : p.status === 'open' ? (
                       <p style={{ margin: '4px 0', fontStyle: 'italic' }}>
                         Make your pick to see what everyone chose.
                       </p>
-                    )}
+                    ) : null}
                   </div>
                 )}
                 {p.status === 'open' && (

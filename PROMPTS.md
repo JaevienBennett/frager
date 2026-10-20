@@ -4,7 +4,47 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
-## Milestone 8 — Fix stake input + clarify pick counts & show stakes
+## Milestone 9 — Show who was right (✓/✗, outcome, point swing)
+
+```
+Make it visually obvious who was right after a prediction is resolved. Milestone 9.
+Mostly frontend; one tiny backend addition (see item 1). No external APIs — sports
+auto-resolution is NOT in this milestone (that's a later milestone). This is only
+about DISPLAYING results clearly once a prediction is resolved.
+
+Backend (tiny):
+1. The prediction detail endpoint already returns each pick and, once resolved,
+   the resolved_outcome. Confirm each pick in the response is enough for the
+   frontend to compute correctness (it is: compare pick.side vs resolved_outcome).
+   Add NO new endpoints. (If convenient, you MAY add a computed `was_correct: bool
+   | null` per pick — null when unresolved — but only if it's clean; otherwise the
+   frontend computes it.)
+
+Frontend (React) — LeagueView:
+2. For any prediction whose status == "resolved", show a clear outcome banner,
+   e.g. a line: "Resolved: YES" (bold, colored: green for yes / red for no, or just
+   a strong label). Make correctness obvious.
+3. In the expanded picks list, for each pick, when the prediction is resolved:
+   - Show a ✓ (green) if pick.side === resolved_outcome, else ✗ (red).
+   - Show the point swing for that pick: +stake if correct, -stake if wrong.
+     e.g. "jae — YES (stake 2) ✓ +2" or "og — NO (stake 5) ✗ -5".
+   - Before resolution, keep the current display (no ✓/✗ yet).
+4. Highlight the current user's own pick specially when resolved, e.g. append
+   "— that's you: you were right! (+2)" or "— that's you: wrong (-2)".
+5. If the resolved prediction still has picks_visible false for some reason (a
+   member who never picked), make sure resolved predictions STILL reveal all picks
+   to every member (this already works via the resolved rule — just don't regress
+   it). The "make your pick to see..." hint should only appear for OPEN predictions.
+6. Keep everything else: counts/stakes line, pick form, creator resolve buttons,
+   leaderboard, reveal-after-pick, friendly errors.
+
+Report back: full changed files, npm run build result, and a short before/after of
+what a resolved prediction looks like now. Do not start long-running servers.
+```
+
+---
+
+## Milestone 8 — Fix stake input + clarify counts/stakes (DONE)
 
 ```
 Fix two related issues in the Frager prediction/pick UI. Milestone 8. Frontend-
