@@ -13,6 +13,8 @@ from .schemas import (
     ResolveRequest,
 )
 from .security import get_current_user, get_db
+from .services import espn_client
+from .services import sports_resolver
 
 router = APIRouter(prefix="/api", tags=["predictions"])
 
@@ -62,8 +64,40 @@ def create_prediction(
     db: Session = Depends(get_db),
 ):
     require_member(db, league_id, user.id)
+    external_game_id = None
+    sport = None
+    league_name = None
+    game_time = None
+    home_team = None
+    away_team = None
+    resolution_source = "manual"
+    if body.game_url:
+        eid = espn_client.extract_nfl_event_id(body.game_url)
+        if not eid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid ESPN NFL game URL. Paste a full espn.com nfl game link.",
+            )
+        external_game_id = eid
+        sport = "nfl"
+        league_name = "nfl"
+        resolution_source = "auto"
+        event = espn_client.fetch_nfl_event(eid)
+        parsed = espn_client.parse_nfl_result(event)
+        game_time = parsed.get("game_time")
+        home_team = parsed.get("home_team")
+        away_team = parsed.get("away_team")
     prediction = Prediction(
-        league_id=league_id, creator_id=user.id, question=body.question
+        league_id=league_id,
+        creator_id=user.id,
+        question=body.question,
+        external_game_id=external_game_id,
+        sport=sport,
+        league=league_name,
+        home_team=home_team,
+        away_team=away_team,
+        game_time=game_time,
+        resolution_source=resolution_source,
     )
     db.add(prediction)
     db.commit()
@@ -84,6 +118,8 @@ def list_predictions(
         .order_by(Prediction.id)
         .all()
     )
+    for p in predictions:
+        sports_resolver.try_auto_resolve(p, db)
     return [prediction_out(p) for p in predictions]
 
 
@@ -139,6 +175,7 @@ def get_prediction(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Prediction not found"
         )
+    sports_resolver.try_auto_resolve(prediction, db)
     caller_has_pick = any(p.user_id == user.id for p in prediction.picks)
     picks_visible = caller_has_pick or prediction.status == "resolved"
     detail = prediction_out(prediction).model_dump()
@@ -187,11 +224,12 @@ def resolve_prediction(
     if prediction.status != "open":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Prediction is already resolved",
+            detail="Prediction is already settled",
         )
     prediction.status = "resolved"
     prediction.resolved_outcome = body.outcome
     prediction.resolved_at = utcnow()
+    prediction.resolution_source = "manual"
     db.commit()
     db.refresh(prediction)
     return prediction_out(prediction)

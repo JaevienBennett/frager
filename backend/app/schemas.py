@@ -53,6 +53,7 @@ class JoinRequest(BaseModel):
 
 class PredictionCreate(BaseModel):
     question: str
+    game_url: str | None = None
 
 
 class PredictionOut(BaseModel):

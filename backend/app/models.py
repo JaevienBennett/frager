@@ -84,6 +84,18 @@ class Prediction(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
+    external_game_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sport: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    league: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    home_team: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    away_team: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    game_time: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    resolution_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    auto_resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     picks: Mapped[list["Pick"]] = relationship(back_populates="prediction")
 

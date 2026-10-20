@@ -397,6 +397,7 @@ function LeagueView({ token, userId, league, onBack }) {
   const [expanded, setExpanded] = useState(null)
   const [loaded, setLoaded] = useState(false)
   const [question, setQuestion] = useState('')
+  const [gameUrl, setGameUrl] = useState('')
   const [error, setError] = useState('')
   const [picks, setPicks] = useState({})
   const [saving, setSaving] = useState({})
@@ -489,9 +490,10 @@ function LeagueView({ token, userId, league, onBack }) {
       await fetchJson(`${API}/api/leagues/${league.id}/predictions`, {
         method: 'POST',
         headers: { ...auth, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question, game_url: gameUrl || null }),
       })
       setQuestion('')
+      setGameUrl('')
       await loadPredictions()
     } catch (err) {
       setError(err.message)
@@ -570,7 +572,7 @@ function LeagueView({ token, userId, league, onBack }) {
       </button>
       <h3 className="section-title">{league.name}</h3>
 
-      <form className="form-row" onSubmit={handlePost}>
+      <form className="form-row" onSubmit={handlePost} style={{ flexWrap: 'wrap' }}>
         <input
           className="input"
           placeholder="Ask a yes/no question…"
@@ -578,10 +580,21 @@ function LeagueView({ token, userId, league, onBack }) {
           onChange={(e) => setQuestion(e.target.value)}
           required
         />
+        <input
+          className="input"
+          placeholder="ESPN NFL game link (optional)"
+          value={gameUrl}
+          onChange={(e) => setGameUrl(e.target.value)}
+        />
         <button type="submit" className="btn btn-primary">
           Post prediction
         </button>
       </form>
+      {gameUrl && (
+        <p className="muted" style={{ marginTop: '-0.5rem' }}>
+          Linked to NFL — will auto-resolve
+        </p>
+      )}
 
       {!loaded ? (
         <p className="muted">{WAKING_UP}</p>
