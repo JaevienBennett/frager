@@ -4,6 +4,57 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
+## Milestone 20 — Sessions: rotating refresh tokens + revocation (DONE)
+
+```
+TITLE: Milestone 20 — Sessions: rotating refresh tokens + revocation
+
+GOAL
+Harden sessions with short-lived access tokens, rotating opaque refresh tokens (hashed),
+and immediate revocation/logout-all. Keep backward compatibility for access tokens minted
+without a version claim.
+
+CONSTRAINTS (must follow)
+- Store only the SHA-256 hash of refresh tokens
+- Rotate on every refresh; replay of a freshly rotated token within a short grace window
+  is treated as a race, not theft; older replay revokes all sessions and bumps token_version
+- Logout revokes only the presented token (not theft); logout-all bumps token_version and
+  revokes all refresh tokens
+- Add "ver" to access tokens and reject mismatched versions in get_current_user
+- Migration must be idempotent; run against Neon/production only with approval
+- Do not start long-running servers
+- Shared checkout rules as specified
+
+BACKEND (Cloudroom)
+1. config.py: REFRESH_TOKEN_EXPIRE_DAYS (default 30)
+2. models.py: User.token_version (default 0); RefreshToken(user_id FK CASCADE,
+   token_hash unique, expires_at, revoked_at, revoked_reason, created_at);
+   User.refresh_tokens relationship
+3. security.py: create_access_token adds "ver"; get_current_user enforces it; hash_refresh_token
+4. schemas.py: Token.refresh_token; RefreshRequest
+5. routes_auth.py: _issue_session; signup/login return pairs; POST /refresh (rate limited,
+   rotate, grace-window race handling, theft on stale replay), POST /logout, POST /logout-all
+6. migrations/migrate_v20_sessions.py: add token_version, create refresh_tokens + indexes +
+   cascade FK, add revoked_reason if missing; idempotent
+7. tests/test_m20_sessions.py: rotation, race vs theft, logout/logout-all, expiry,
+   backward compat, migration idempotency
+
+FRONTEND (other agent)
+8. frontend/src/App.jsx: store access+refresh, silent refresh+retry on 401, refresh on boot,
+   logout revokes refresh, "Log out all" calls logout-all
+
+VERIFY
+- migrate_v20_sessions against scratch DB
+- `cd backend && DATABASE_URL=<scratch> python3 -m pytest tests -q` -> 61 passed
+- `python3 -c "import app.main"` -> OK
+- `cd frontend && npm run build` -> OK
+
+RESULT (implemented)
+- 61 tests pass, build passes. Scratch Postgres was running during verification.
+```
+
+---
+
 ## Milestone 19 — League management + invite links (DONE)
 
 ```

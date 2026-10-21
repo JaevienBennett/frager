@@ -17,6 +17,8 @@ deployed end to end.
 ## What it does
 
 - **Accounts** — sign up with an email, a public nickname, and a password.
+- **Sessions** — short-lived access tokens with rotating refresh tokens; the app renews
+  them silently, and "Log out all" revokes every device immediately.
 - **Leagues** — create a private league and invite friends with a shareable link or a short
   invite code.
 - **Manage** — owners can rename or delete a league; members can leave. Deleting a league
@@ -41,7 +43,7 @@ deployed end to end.
 | Frontend  | React (Vite)                    |
 | Backend   | FastAPI (Python)                |
 | Database  | PostgreSQL                      |
-| Auth      | JWT (python-jose) + bcrypt      |
+| Auth      | JWT (python-jose) + bcrypt + rotating refresh tokens |
 | Real-time | WebSockets (FastAPI)            |
 | Hosting   | Vercel (frontend) · Render (API) · Neon (DB) |
 
@@ -86,10 +88,11 @@ frager/
 │   ├── migrate_v4.py            ALTER predictions (resolution columns)
 │   ├── migrate_v7.py            ALTER users (nickname, backfill + unique index)
 │   ├── migrations/              migrate_v14_auto_resolve.py,
-│   │                            migrate_v18_cascades.py
+│   │                            migrate_v18_cascades.py,
+│   │                            migrate_v20_sessions.py
 │   ├── tests/                   conftest.py, test_smoke_flows.py,
 │   │                            test_m14_auto_resolve.py, test_m18_validation.py,
-│   │                            test_m19_league_management.py
+│   │                            test_m19_league_management.py, test_m20_sessions.py
 │   ├── render.yaml
 │   └── requirements.txt
 └── frontend/
@@ -101,7 +104,7 @@ frager/
 ```bash
 cd backend
 pip install pytest httpx       # test runner + TestClient transport (if not installed)
-python -m pytest tests         # 45 tests: smoke flows, auto-resolve, validation, cascades, league management
+python -m pytest tests         # 61 tests: smoke flows, auto-resolve, validation, cascades, league management, sessions
 ```
 
 ```bash
@@ -126,6 +129,7 @@ cp .env.example .env                 # set DATABASE_URL, SECRET_KEY, ACCESS_TOKE
 python create_tables.py              # create tables (and run migrate_v*.py on existing DBs)
 python -m migrations.migrate_v14_auto_resolve   # only for DBs created before M14
 python -m migrations.migrate_v18_cascades       # only for DBs created before M18
+python -m migrations.migrate_v20_sessions       # only for DBs created before M20
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -149,8 +153,11 @@ other users — only nicknames.
 | Method | Path                                     | Body                     | Success | Errors |
 |--------|------------------------------------------|--------------------------|---------|--------|
 | GET    | `/api/health`                            | —                        | 200 `{"status":"ok"}` | — |
-| POST   | `/api/auth/signup`                       | `{email, nickname, password}` | 201 `{access_token}` | 409 email/nickname taken |
-| POST   | `/api/auth/login`                        | `{email, password}`      | 200 `{access_token}` | 401 bad credentials |
+| POST   | `/api/auth/signup`                       | `{email, nickname, password}` | 201 `{access_token, refresh_token}` | 409 email/nickname taken |
+| POST   | `/api/auth/login`                        | `{email, password}`      | 200 `{access_token, refresh_token}` | 401 bad credentials |
+| POST   | `/api/auth/refresh`                      | `{refresh_token}`        | 200 new token pair | 401 invalid/expired/revoked/reused |
+| POST   | `/api/auth/logout`                       | `{refresh_token}`        | 200 `{"ok": true}` | — |
+| POST   | `/api/auth/logout-all`                   | —                        | 200 `{"ok": true}` (all sessions revoked) | 401 |
 | GET    | `/api/auth/me`                           | —                        | 200 `{id, email, nickname}` | 401 |
 | POST   | `/api/leagues`                           | `{name}`                 | 201 league | 401 |
 | GET    | `/api/leagues`                           | —                        | 200 user's leagues | 401 |
@@ -169,8 +176,15 @@ other users — only nicknames.
 
 ## Notes
 
-- **Rate limits:** `POST /api/auth/signup` allows 5/minute and `POST /api/auth/login`
-  10/minute per IP; exceeding either returns `429`.
+- **Rate limits:** `POST /api/auth/signup` allows 5/minute, `POST /api/auth/login`
+  10/minute, `POST /api/auth/refresh` 60/minute, and the logout endpoints 30/minute per IP;
+  exceeding any returns `429`.
+- **Sessions:** access tokens last `ACCESS_TOKEN_EXPIRE_MINUTES` (default 60); refresh tokens
+  last `REFRESH_TOKEN_EXPIRE_DAYS` (default 30), are stored only as SHA-256 hashes, and rotate
+  on every use. Replaying a rotated token after a 15-second grace window revokes every
+  session. "Log out all" bumps a per-user token version, invalidating outstanding access
+  tokens immediately. Tokens live in `localStorage` (the usual XSS trade-off); an httpOnly
+  cookie mode is a possible future hardening step.
 - **Passwords:** signup and login require 8–128 characters.
 - **Input limits:** league names are 1–100 characters; prediction questions are 1–500
   (whitespace is trimmed). Validation is enforced on both the client and the server.

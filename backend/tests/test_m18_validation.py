@@ -174,6 +174,8 @@ def test_models_declare_cascade_on_target_fks():
         ("picks", "prediction_id"),
         ("picks", "user_id"),
         ("leagues", "owner_id"),
+        # added in M20: deleting a user must drop their refresh tokens
+        ("refresh_tokens", "user_id"),
     }
     found = set()
     for table in models.Base.metadata.tables.values():

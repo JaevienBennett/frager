@@ -59,7 +59,7 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 - **Session:** localStorage token, /me on load. **OK**.
 - **Logout:** Clears token. **OK**.
 - **Password requirements:** No explicit complexity beyond non-empty (schema just requires password). **LOW** - consider minimum length. — **FIXED (M17):** `Credentials.password` is `Field(min_length=8, max_length=128)`; frontend enforces `minLength={8}`.
-- **Token expiry:** Configurable `ACCESS_TOKEN_EXPIRE_MINUTES`. **OK**.
+- **Token expiry:** Configurable `ACCESS_TOKEN_EXPIRE_MINUTES`. — **IMPROVED (M20):** rotating opaque refresh tokens with per-user token versioning, logout-all invalidation, and theft detection.
 - **Evidence:** `app/security.py`, `app/routes_auth.py`, `app/config.py`.
 
 ## 8) Predictions
@@ -112,7 +112,6 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 3. **Password minimum length**. — **DONE (M17)**
 
 ## Still open (not yet scheduled)
-- No token refresh / revocation list (tokens expire via `ACCESS_TOKEN_EXPIRE_MINUTES`).
 - WS connection manager is in-process (single-instance hosting assumed).
 - No ownership transfer: an owner cannot leave a league (409) — they must delete it.
 - No debouncing / list virtualization (fine at current scale).
@@ -169,11 +168,30 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
   shareable invite link with copy button, and `/?join=CODE` pre-fill.
 - Docs: README API/features, DEPLOY migration prerequisite.
 
+### M20 — Sessions: rotating refresh tokens + revocation
+- `backend/app/models.py`: `User.token_version` + new `refresh_tokens` table (only SHA-256
+  hashes stored, `user_id` `ON DELETE CASCADE`).
+- `backend/app/security.py`: access tokens include `"ver"` claim; `get_current_user`
+  rejects tokens whose version doesn't match; `hash_refresh_token()` added.
+- `backend/app/routes_auth.py`: `POST /api/auth/refresh` rotates tokens (replay of a
+  freshly rotated token within the grace window is treated as a race, not theft; replay
+  much later revokes all sessions), `POST /api/auth/logout` (single token), and
+  `POST /api/auth/logout-all` (version bump + revoke all).
+- `backend/app/schemas.py`: `Token` now includes `refresh_token`; added `RefreshRequest`.
+- `backend/migrations/migrate_v20_sessions.py`: idempotent migration for `users.token_version`,
+  `refresh_tokens`, indexes, and the cascade FK; safe to run twice.
+- `backend/tests/test_m20_sessions.py`: 16 tests covering rotation, theft detection,
+  logout/logout-all, expiry, backward compat with legacy access tokens, and migration
+  idempotency.
+- `frontend/src/App.jsx`: stores access + refresh tokens, silently refreshes-and-retries on
+  401, refreshes on boot, revokes on logout, and adds a "Log out all" action.
+
 ### Verification
 - `python3 -m pytest tests -q` (from `backend/`, against a scratch PostgreSQL 16 instance)
-  → **45 passed** (27 pre-existing + 18 M19). Neon was not touched.
+  → **61 passed** (45 pre-existing + 16 M20). Neon was not touched.
 - `npm run build` (in `frontend/`) → **build succeeded**.
 - `python3 -c "import app.main"` → imports cleanly.
+- `migrate_v20_sessions` run twice on a legacy schema → changes applied, then 0/0 change(s).
 - `migrate_v18_cascades` run twice on a legacy schema → 7/7 changed, then 0/7 changed;
   later applied to Neon (7/7, then 0/7 on a repeat run).
 - M19 delete tests fail with an FK violation on a DB without the M18 cascade, confirming

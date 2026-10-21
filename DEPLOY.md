@@ -29,6 +29,7 @@ For an **existing** database, also run the idempotent migrations (safe to repeat
 cd backend
 DATABASE_URL="<render's database url>" .venv/bin/python -m migrations.migrate_v14_auto_resolve
 DATABASE_URL="<render's database url>" .venv/bin/python -m migrations.migrate_v18_cascades
+DATABASE_URL="<render's database url>" .venv/bin/python -m migrations.migrate_v20_sessions
 ```
 
 `create_tables.py` and all `migrations/*` scripts are idempotent. Run
@@ -36,7 +37,8 @@ DATABASE_URL="<render's database url>" .venv/bin/python -m migrations.migrate_v1
 `ON DELETE CASCADE` (the models already declare it; the script updates an older DB).
 This is required before the M19 league-delete endpoint is used — without it,
 `DELETE /api/leagues/{id}` fails with a foreign-key violation. It has already been applied
-to the current Neon database.
+to the current Neon database. Run `migrate_v20_sessions` once on Neon to add
+`users.token_version` and the hashed `refresh_tokens` table (required for M20 sessions).
 
 ## 2. Backend on Render
 

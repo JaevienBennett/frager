@@ -1,3 +1,4 @@
+import hashlib
 from datetime import datetime, timedelta
 
 from fastapi import Depends, HTTPException, status
@@ -22,10 +23,15 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
 
-def create_access_token(subject: str) -> str:
+def create_access_token(subject: str, token_version: int = 0) -> str:
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload = {"sub": subject, "exp": expire}
+    payload = {"sub": subject, "exp": expire, "ver": int(token_version or 0)}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def hash_refresh_token(token: str) -> str:
+    """Opaque refresh tokens are stored only as a SHA-256 hex digest."""
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def decode_access_token(token: str) -> dict:
@@ -67,5 +73,11 @@ def get_current_user(
         raise unauthorized
     user = db.get(User, int(subject)) if str(subject).isdigit() else None
     if user is None:
+        raise unauthorized
+    try:
+        token_version = int(payload.get("ver", 0) or 0)
+    except (TypeError, ValueError):
+        raise unauthorized from None
+    if token_version != user.token_version:
         raise unauthorized
     return user

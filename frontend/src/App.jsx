@@ -2,12 +2,74 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const TOKEN_KEY = 'frager_token'
+const REFRESH_KEY = 'frager_refresh'
 const REQUEST_TIMEOUT_MS = 60000
 const NETWORK_ERROR =
   "Couldn't reach the server. It may be waking up — please try again in a moment."
 const WAKING_UP = 'Waking up the server…'
 
-async function fetchJson(url, options = {}) {
+let refreshPromise = null
+
+function getRefreshToken() {
+  return localStorage.getItem(REFRESH_KEY)
+}
+
+function storeSession(accessToken, refreshToken) {
+  localStorage.setItem(TOKEN_KEY, accessToken)
+  if (refreshToken) localStorage.setItem(REFRESH_KEY, refreshToken)
+  else localStorage.removeItem(REFRESH_KEY)
+  window.dispatchEvent(
+    new CustomEvent('frager:tokens', { detail: { token: accessToken } }),
+  )
+}
+
+function clearSession() {
+  localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(REFRESH_KEY)
+}
+
+function isAuthAttempt(url) {
+  return /\/api\/auth\/(login|signup|refresh)$/.test(url)
+}
+
+async function refreshSession() {
+  if (refreshPromise) return refreshPromise
+  refreshPromise = (async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const refreshToken = getRefreshToken()
+      if (!refreshToken) throw new Error('No refresh token')
+      let res
+      try {
+        res = await fetch(`${API}/api/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        })
+      } catch {
+        throw new Error(NETWORK_ERROR)
+      }
+      if (res.ok) {
+        const data = await res.json()
+        storeSession(data.access_token, data.refresh_token)
+        return data.access_token
+      }
+      const current = getRefreshToken()
+      if (current && current !== refreshToken) {
+        // Another tab rotated the token while this request was in flight.
+        continue
+      }
+      clearSession()
+      window.dispatchEvent(new Event('frager:auth-expired'))
+      throw new Error('Session expired, please log in again.')
+    }
+    throw new Error('Session expired, please log in again.')
+  })().finally(() => {
+    refreshPromise = null
+  })
+  return refreshPromise
+}
+
+async function fetchJson(url, options = {}, retryAuth = true) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   let res
@@ -17,6 +79,23 @@ async function fetchJson(url, options = {}) {
     throw new Error(NETWORK_ERROR)
   } finally {
     clearTimeout(timer)
+  }
+  if (
+    res.status === 401 &&
+    retryAuth &&
+    !isAuthAttempt(url) &&
+    getRefreshToken()
+  ) {
+    try {
+      const token = await refreshSession()
+      const headers = {
+        ...(options.headers || {}),
+        Authorization: `Bearer ${token}`,
+      }
+      return await fetchJson(url, { ...options, headers }, false)
+    } catch (err) {
+      if (err.message === NETWORK_ERROR) throw err
+    }
   }
   if (!res.ok) {
     let detail = `Request failed (HTTP ${res.status})`
@@ -115,19 +194,53 @@ function Brand({ hero = false }) {
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY))
   const [user, setUser] = useState(null)
-  const [booting, setBooting] = useState(() => !!localStorage.getItem(TOKEN_KEY))
+  const [booting, setBooting] = useState(
+    () => !!(localStorage.getItem(TOKEN_KEY) || getRefreshToken()),
+  )
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [nickname, setNickname] = useState('')
   const [mode, setMode] = useState('login')
   const [error, setError] = useState('')
 
-  const logout = useCallback(() => {
-    localStorage.removeItem(TOKEN_KEY)
+  const logout = useCallback(async () => {
+    const refreshToken = getRefreshToken()
+    clearSession()
     setToken(null)
     setUser(null)
     setError('')
+    if (refreshToken) {
+      try {
+        await fetchJson(`${API}/api/auth/logout`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        })
+      } catch {}
+    }
   }, [])
+
+  async function logoutAll() {
+    if (
+      !window.confirm(
+        'Log out of all devices? Every session will need to sign in again.',
+      )
+    ) {
+      return
+    }
+    setError('')
+    try {
+      await fetchJson(`${API}/api/auth/logout-all`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      clearSession()
+      setToken(null)
+      setUser(null)
+    } catch (err) {
+      if (err.status !== 401) setError(err.message)
+    }
+  }
 
   const loadMe = useCallback(async (tok) => {
     try {
@@ -140,7 +253,7 @@ export default function App() {
       if (err.message === NETWORK_ERROR) {
         setError(err.message)
       } else {
-        localStorage.removeItem(TOKEN_KEY)
+        clearSession()
         setToken(null)
         setUser(null)
         setError('Session expired, please log in again.')
@@ -151,8 +264,34 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    function onTokens(e) {
+      if (e.detail?.token) setToken(e.detail.token)
+    }
+    function onExpired() {
+      setToken(null)
+      setUser(null)
+      setError('Session expired, please log in again.')
+    }
+    window.addEventListener('frager:tokens', onTokens)
+    window.addEventListener('frager:auth-expired', onExpired)
+    return () => {
+      window.removeEventListener('frager:tokens', onTokens)
+      window.removeEventListener('frager:auth-expired', onExpired)
+    }
+  }, [])
+
+  useEffect(() => {
     if (token) loadMe(token)
-    else setBooting(false)
+    else if (getRefreshToken()) {
+      refreshSession()
+        .then((tok) => setToken(tok))
+        .catch((err) => {
+          if (err.message === NETWORK_ERROR) setError(err.message)
+          setBooting(false)
+        })
+    } else {
+      setBooting(false)
+    }
   }, [token, loadMe])
 
   async function submit(e) {
@@ -166,7 +305,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      localStorage.setItem(TOKEN_KEY, data.access_token)
+      storeSession(data.access_token, data.refresh_token)
       setPassword('')
       setNickname('')
       setToken(data.access_token)
@@ -185,6 +324,9 @@ export default function App() {
               <span className="header-user" data-testid="user-status">
                 Logged in as {user.nickname}
               </span>
+              <button className="btn btn-secondary btn-sm" onClick={logoutAll}>
+                Log out all
+              </button>
               <button className="btn btn-secondary btn-sm" onClick={logout}>
                 Log out
               </button>
