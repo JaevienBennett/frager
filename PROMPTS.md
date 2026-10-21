@@ -4,6 +4,51 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
+## Milestone 19 — League management + invite links (DONE)
+
+```
+TITLE: Milestone 19 — League management + invite links
+
+GOAL
+Let owners rename/delete leagues, let members leave, and make invites shareable as links.
+
+CONSTRAINTS (must follow)
+- Do not expose emails (nicknames only)
+- Owner-only rename/delete; owner cannot leave (must delete)
+- Deletes rely on the M18 ON DELETE CASCADE FKs; do not manually delete children
+- Do not run migrations against a shared/production DB without approval
+- Do not start long-running servers
+- Shared checkout: do not switch branches or commit/stage/push; only edit the assigned files
+
+BACKEND (Cloudroom)
+1. backend/app/routes_leagues.py:
+   - PATCH /api/leagues/{id}: LeagueUpdate body; missing/non-member -> 404, non-owner -> 403.
+   - DELETE /api/leagues/{id}: missing/non-member -> 404, non-owner -> 403; db.delete; -> {"ok": true}.
+   - POST /api/leagues/{id}/leave: missing/no membership -> 404, owner -> 409; remove only the
+     caller's membership -> {"ok": true}.
+2. backend/app/schemas.py: LeagueUpdate with the same trim/1-100 validation as LeagueCreate
+   (shared normalize_league_name helper).
+3. backend/tests/test_m19_league_management.py: permissions, validation, leave rules, and a
+   non-vacuous cascade assertion (memberships/predictions/picks actually gone).
+
+FRONTEND (other agent)
+4. frontend/src/App.jsx + styles.css: owner rename/delete, member leave, shareable invite link
+   with copy, and `/?join=CODE` pre-fill in the join form.
+
+VERIFY
+- `cd backend && DATABASE_URL=<scratch> python3 -m pytest tests -q` -> 45 passed
+- `python3 -c "import app.main"` -> OK
+- `cd frontend && npm run build` -> OK
+
+RESULT (implemented)
+- Backend by Cloudroom (18 tests), frontend + docs by the other agent, branch
+  m19-league-management. Verified on a scratch PostgreSQL 16 instance (never touched Neon):
+  45 tests pass, build passes. The M18 cascade migration is a hard prerequisite for delete
+  (without it: FK violation); it is already applied to Neon.
+```
+
+---
+
 ## Milestone 18 — Input validation + cascade integrity (DONE)
 
 ```

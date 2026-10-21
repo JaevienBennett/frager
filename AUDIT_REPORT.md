@@ -1,6 +1,6 @@
 # Frager Audit Report (M0–M14)
 
-Date: 2026-10-20 (audit) · updated 2026-10-21 (after M15–M17 fixes)
+Date: 2026-10-20 (audit) · updated 2026-10-21 (after M15–M19 fixes)
 Repo: /Users/og.jae/projects/frager (main)
 Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt pinned), Render/Vercel
 
@@ -52,6 +52,7 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 - **Invite codes:** `secrets.token_urlsafe(6)`, stored unique. **OK**.
 - **Join flow:** 404 unknown, 409 duplicate. Owner auto-member. **OK**.
 - **Membership checks:** Used everywhere. **OK**.
+- **Management:** No rename/delete/leave endpoints; no shareable invite link (v1 gap). — **FIXED (M19):** `PATCH`/`DELETE /api/leagues/{id}` (owner-only) and `POST /api/leagues/{id}/leave` (members; owner gets 409); frontend adds rename/delete/leave controls plus a `/?join=CODE` invite link. Deletes rely on the M18 cascades.
 
 ## 7) Auth
 - **Tokens:** JWT (python-jose), bcrypt via passlib (pinned 4.0.1). **OK**.
@@ -113,8 +114,7 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 ## Still open (not yet scheduled)
 - No token refresh / revocation list (tokens expire via `ACCESS_TOKEN_EXPIRE_MINUTES`).
 - WS connection manager is in-process (single-instance hosting assumed).
-- `migrate_v18_cascades.py` has not been applied to Neon yet — required once at deploy time
-  (see DEPLOY.md). Code works without it until delete operations are added.
+- No ownership transfer: an owner cannot leave a league (409) — they must delete it.
 - No debouncing / list virtualization (fine at current scale).
 
 ## Implemented Fixes
@@ -151,15 +151,30 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 - `backend/app/models.py`: `ondelete="CASCADE"` on the seven core FKs; `passive_deletes=True`
   on the owning relationships so Postgres performs the delete.
 - `backend/migrations/migrate_v18_cascades.py`: dynamic, idempotent migration that rewrites
-  existing FKs to `ON DELETE CASCADE` (not yet applied to Neon).
+  existing FKs to `ON DELETE CASCADE` (applied to Neon; second run changed 0/7).
 - `backend/tests/test_m18_validation.py` + `backend/tests/conftest.py`: validation, schema
   limits, migration idempotency, and cascade-delete coverage.
 - `frontend/src/App.jsx`: client-side trim + length validation and `maxLength` for league
   names and prediction questions.
 
+### M19 — League management + invite links
+- `backend/app/routes_leagues.py`: `PATCH /api/leagues/{id}` (rename, owner-only),
+  `DELETE /api/leagues/{id}` (owner-only; cascades memberships/predictions/picks), and
+  `POST /api/leagues/{id}/leave` (members; owner gets 409).
+- `backend/app/schemas.py`: `LeagueUpdate` reuses a shared `normalize_league_name()` so
+  create/rename validation cannot drift (trim, 1–100, non-blank).
+- `backend/tests/test_m19_league_management.py`: 18 tests for permissions, validation,
+  leave rules, and cascade deletion (including a non-vacuous cascade assertion).
+- `frontend/src/App.jsx` + `styles.css`: owner rename/delete and member leave controls,
+  shareable invite link with copy button, and `/?join=CODE` pre-fill.
+- Docs: README API/features, DEPLOY migration prerequisite.
+
 ### Verification
 - `python3 -m pytest tests -q` (from `backend/`, against a scratch PostgreSQL 16 instance)
-  → **27 passed** (Neon was not touched).
+  → **45 passed** (27 pre-existing + 18 M19). Neon was not touched.
 - `npm run build` (in `frontend/`) → **build succeeded**.
 - `python3 -c "import app.main"` → imports cleanly.
-- `migrate_v18_cascades` run twice on a legacy schema → 7/7 changed, then 0/7 changed.
+- `migrate_v18_cascades` run twice on a legacy schema → 7/7 changed, then 0/7 changed;
+  later applied to Neon (7/7, then 0/7 on a repeat run).
+- M19 delete tests fail with an FK violation on a DB without the M18 cascade, confirming
+  the migration prerequisite is real.

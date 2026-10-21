@@ -17,7 +17,10 @@ deployed end to end.
 ## What it does
 
 - **Accounts** — sign up with an email, a public nickname, and a password.
-- **Leagues** — create a private league and invite friends with a short invite code.
+- **Leagues** — create a private league and invite friends with a shareable link or a short
+  invite code.
+- **Manage** — owners can rename or delete a league; members can leave. Deleting a league
+  cascades its memberships, predictions, and picks.
 - **Predictions** — anyone in a league posts a yes/no question.
 - **Picks** — members pick a side and optionally stake points.
 - **Reveal** — you can only see everyone else's picks *after* you've made your own
@@ -85,7 +88,8 @@ frager/
 │   ├── migrations/              migrate_v14_auto_resolve.py,
 │   │                            migrate_v18_cascades.py
 │   ├── tests/                   conftest.py, test_smoke_flows.py,
-│   │                            test_m14_auto_resolve.py, test_m18_validation.py
+│   │                            test_m14_auto_resolve.py, test_m18_validation.py,
+│   │                            test_m19_league_management.py
 │   ├── render.yaml
 │   └── requirements.txt
 └── frontend/
@@ -97,7 +101,7 @@ frager/
 ```bash
 cd backend
 pip install pytest httpx       # test runner + TestClient transport (if not installed)
-python -m pytest tests         # 27 tests: smoke flows, auto-resolve, validation + cascades
+python -m pytest tests         # 45 tests: smoke flows, auto-resolve, validation, cascades, league management
 ```
 
 ```bash
@@ -152,6 +156,9 @@ other users — only nicknames.
 | GET    | `/api/leagues`                           | —                        | 200 user's leagues | 401 |
 | GET    | `/api/leagues/{id}`                      | —                        | 200 league (members) | 404 |
 | POST   | `/api/leagues/join`                      | `{invite_code}`          | 200 league | 404 unknown code, 409 already a member |
+| PATCH  | `/api/leagues/{id}`                      | `{name}`                 | 200 league (owner) | 403 non-owner, 404 non-member |
+| DELETE | `/api/leagues/{id}`                      | —                        | 200 `{"ok": true}` (owner; cascades) | 403 non-owner, 404 non-member |
+| POST   | `/api/leagues/{id}/leave`                | —                        | 200 `{"ok": true}` | 409 owner, 404 non-member |
 | POST   | `/api/leagues/{id}/predictions`          | `{question, game_url?}`  | 201 prediction | 404 non-member, 400 bad game link |
 | GET    | `/api/leagues/{id}/predictions`          | —                        | 200 list w/ counts + stakes | 404 non-member |
 | POST   | `/api/predictions/{id}/pick`             | `{side, stake}`          | 201 new / 200 updated | 404, 409 resolved, 422 bad side/stake |
@@ -167,9 +174,13 @@ other users — only nicknames.
 - **Passwords:** signup and login require 8–128 characters.
 - **Input limits:** league names are 1–100 characters; prediction questions are 1–500
   (whitespace is trimmed). Validation is enforced on both the client and the server.
-- **Deleting data:** core foreign keys are `ON DELETE CASCADE`, so removing a user or league
-  cleans up its memberships, predictions, and picks. Existing databases need
-  `python -m migrations.migrate_v18_cascades` once (see DEPLOY.md).
+- **League management:** only the owner can rename or delete a league; members can leave.
+  The owner cannot leave — deleting the league is the exit. Every league has a shareable
+  invite link (`/?join=CODE`) that pre-fills the join form.
+- **Deleting data:** core foreign keys are `ON DELETE CASCADE`, so deleting a league (or a
+  user) cleans up its memberships, predictions, and picks. Existing databases need
+  `python -m migrations.migrate_v18_cascades` once — the delete endpoints require it (see
+  DEPLOY.md).
 - **Free-tier hosting:** the API sleeps after inactivity, so the first request can take
   ~30–60s to wake. The frontend shows a friendly "Waking up the server…" state and
   auto-retries, rather than failing.

@@ -34,6 +34,9 @@ DATABASE_URL="<render's database url>" .venv/bin/python -m migrations.migrate_v1
 `create_tables.py` and all `migrations/*` scripts are idempotent. Run
 `migrate_v18_cascades` once on Neon to switch the core foreign keys to
 `ON DELETE CASCADE` (the models already declare it; the script updates an older DB).
+This is required before the M19 league-delete endpoint is used — without it,
+`DELETE /api/leagues/{id}` fails with a foreign-key violation. It has already been applied
+to the current Neon database.
 
 ## 2. Backend on Render
 
