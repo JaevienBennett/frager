@@ -25,7 +25,9 @@ class User(Base):
         DateTime(timezone=True), default=utcnow, nullable=False
     )
 
-    memberships: Mapped[list["Membership"]] = relationship(back_populates="user")
+    memberships: Mapped[list["Membership"]] = relationship(
+        back_populates="user", passive_deletes=True
+    )
 
 
 class League(Base):
@@ -37,13 +39,15 @@ class League(Base):
         String(64), unique=True, index=True, nullable=False
     )
     owner_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
 
-    memberships: Mapped[list["Membership"]] = relationship(back_populates="league")
+    memberships: Mapped[list["Membership"]] = relationship(
+        back_populates="league", passive_deletes=True
+    )
 
 
 class Membership(Base):
@@ -52,10 +56,10 @@ class Membership(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     league_id: Mapped[int] = mapped_column(
-        ForeignKey("leagues.id"), nullable=False, index=True
+        ForeignKey("leagues.id", ondelete="CASCADE"), nullable=False, index=True
     )
     user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
@@ -70,10 +74,10 @@ class Prediction(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     league_id: Mapped[int] = mapped_column(
-        ForeignKey("leagues.id"), nullable=False, index=True
+        ForeignKey("leagues.id", ondelete="CASCADE"), nullable=False, index=True
     )
     creator_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     question: Mapped[str] = mapped_column(String(500), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="open", nullable=False)
@@ -97,7 +101,9 @@ class Prediction(Base):
         DateTime(timezone=True), nullable=True
     )
 
-    picks: Mapped[list["Pick"]] = relationship(back_populates="prediction")
+    picks: Mapped[list["Pick"]] = relationship(
+        back_populates="prediction", passive_deletes=True
+    )
 
 
 class Pick(Base):
@@ -106,10 +112,10 @@ class Pick(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     prediction_id: Mapped[int] = mapped_column(
-        ForeignKey("predictions.id"), nullable=False, index=True
+        ForeignKey("predictions.id", ondelete="CASCADE"), nullable=False, index=True
     )
     user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     side: Mapped[str] = mapped_column(String(8), nullable=False)
     stake: Mapped[int] = mapped_column(nullable=False, default=0)

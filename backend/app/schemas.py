@@ -38,6 +38,16 @@ class UserOut(BaseModel):
 class LeagueCreate(BaseModel):
     name: str
 
+    @field_validator("name")
+    @classmethod
+    def name_normalized(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("league name must not be blank")
+        if len(value) > 100:
+            raise ValueError("league name must be at most 100 characters")
+        return value
+
 
 class LeagueOut(BaseModel):
     id: int
@@ -54,6 +64,16 @@ class JoinRequest(BaseModel):
 class PredictionCreate(BaseModel):
     question: str
     game_url: str | None = None
+
+    @field_validator("question")
+    @classmethod
+    def question_normalized(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("question must not be blank")
+        if len(value) > 500:
+            raise ValueError("question must be at most 500 characters")
+        return value
 
 
 class PredictionOut(BaseModel):
