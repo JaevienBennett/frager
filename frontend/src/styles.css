@@ -208,6 +208,32 @@ p {
   border-top: 1px solid var(--border);
 }
 
+.league-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.league-head .row {
+  flex-wrap: wrap;
+}
+
+.invite-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.invite-row .input {
+  flex: 1 1 260px;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+}
+
 /* ------------------------------------------------------------
    Headings & text helpers
    ------------------------------------------------------------ */

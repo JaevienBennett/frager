@@ -265,6 +265,7 @@ function Leagues({ token, userId }) {
   const [loaded, setLoaded] = useState(false)
   const [name, setName] = useState('')
   const [joinCode, setJoinCode] = useState('')
+  const [joinFromLink, setJoinFromLink] = useState(false)
   const [newLeague, setNewLeague] = useState(null)
   const [selected, setSelected] = useState(null)
   const [error, setError] = useState('')
@@ -283,6 +284,30 @@ function Leagues({ token, userId }) {
   useEffect(() => {
     loadLeagues().finally(() => setLoaded(true))
   }, [loadLeagues])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('join')
+    if (code) {
+      setJoinCode(code.trim())
+      setJoinFromLink(true)
+    }
+  }, [])
+
+  function handleLeagueUpdated(updated) {
+    setLeagues((prev) => prev.map((l) => (l.id === updated.id ? updated : l)))
+    setSelected(updated)
+  }
+
+  function handleLeagueDeleted(id) {
+    setLeagues((prev) => prev.filter((l) => l.id !== id))
+    setSelected(null)
+  }
+
+  function handleLeftLeague() {
+    setSelected(null)
+    loadLeagues()
+  }
 
   async function handleCreate(e) {
     e.preventDefault()
@@ -317,9 +342,13 @@ function Leagues({ token, userId }) {
       await fetchJson(`${API}/api/leagues/join`, {
         method: 'POST',
         headers: { ...auth, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ invite_code: joinCode }),
+        body: JSON.stringify({ invite_code: joinCode.trim() }),
       })
       setJoinCode('')
+      setJoinFromLink(false)
+      if (window.location.search) {
+        window.history.replaceState({}, '', window.location.pathname)
+      }
       await loadLeagues()
     } catch (err) {
       setError(err.message)
@@ -349,13 +378,21 @@ function Leagues({ token, userId }) {
           className="input"
           placeholder="invite code"
           value={joinCode}
-          onChange={(e) => setJoinCode(e.target.value)}
+          onChange={(e) => {
+            setJoinCode(e.target.value)
+            setJoinFromLink(false)
+          }}
           required
         />
         <button type="submit" className="btn btn-secondary">
           Join league
         </button>
       </form>
+      {joinFromLink && (
+        <p className="hint" data-testid="join-hint">
+          Invite code filled in from your link — click “Join league”.
+        </p>
+      )}
 
       {newLeague && (
         <p className="success" data-testid="new-league">
@@ -395,13 +432,16 @@ function Leagues({ token, userId }) {
           userId={userId}
           league={selected}
           onBack={() => setSelected(null)}
+          onUpdated={handleLeagueUpdated}
+          onDeleted={handleLeagueDeleted}
+          onLeft={handleLeftLeague}
         />
       )}
     </section>
   )
 }
 
-function LeagueView({ token, userId, league, onBack }) {
+function LeagueView({ token, userId, league, onBack, onUpdated, onDeleted, onLeft }) {
   const [predictions, setPredictions] = useState([])
   const [leaderboard, setLeaderboard] = useState([])
   const [details, setDetails] = useState({})
@@ -414,12 +454,102 @@ function LeagueView({ token, userId, league, onBack }) {
   const [saving, setSaving] = useState({})
   const [pickErrors, setPickErrors] = useState({})
   const [pickSaved, setPickSaved] = useState({})
+  const [renaming, setRenaming] = useState(false)
+  const [newName, setNewName] = useState(league.name)
+  const [actionError, setActionError] = useState('')
+  const [actionBusy, setActionBusy] = useState(false)
+  const [inviteCopied, setInviteCopied] = useState(false)
   const savedTimers = useRef({})
   const detailRequested = useRef({})
   const wsRef = useRef(null)
   const wsReconnectRef = useRef(null)
 
   const auth = { Authorization: `Bearer ${token}` }
+  const isOwner = league.owner_id === userId
+  const inviteUrl = `${window.location.origin}${window.location.pathname}?join=${encodeURIComponent(
+    league.invite_code,
+  )}`
+
+  useEffect(() => {
+    setNewName(league.name)
+    setRenaming(false)
+    setActionError('')
+  }, [league.id, league.name])
+
+  async function handleRename(e) {
+    e.preventDefault()
+    setActionError('')
+    const trimmed = newName.trim()
+    if (!trimmed) {
+      setActionError('League name is required.')
+      return
+    }
+    if (trimmed.length > 100) {
+      setActionError('League name must be 100 characters or fewer.')
+      return
+    }
+    setActionBusy(true)
+    try {
+      const updated = await fetchJson(`${API}/api/leagues/${league.id}`, {
+        method: 'PATCH',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      })
+      onUpdated?.(updated)
+    } catch (err) {
+      setActionError(err.message)
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  async function handleDelete() {
+    if (
+      !window.confirm(
+        `Delete "${league.name}"? This removes its predictions and picks for everyone, and cannot be undone.`,
+      )
+    ) {
+      return
+    }
+    setActionError('')
+    setActionBusy(true)
+    try {
+      await fetchJson(`${API}/api/leagues/${league.id}`, {
+        method: 'DELETE',
+        headers: auth,
+      })
+      onDeleted?.(league.id)
+    } catch (err) {
+      setActionError(err.message)
+      setActionBusy(false)
+    }
+  }
+
+  async function handleLeave() {
+    if (!window.confirm(`Leave "${league.name}"?`)) return
+    setActionError('')
+    setActionBusy(true)
+    try {
+      await fetchJson(`${API}/api/leagues/${league.id}/leave`, {
+        method: 'POST',
+        headers: auth,
+      })
+      onLeft?.()
+    } catch (err) {
+      setActionError(err.message)
+      setActionBusy(false)
+    }
+  }
+
+  async function copyInvite() {
+    try {
+      await navigator.clipboard.writeText(inviteUrl)
+      setInviteCopied(true)
+      setTimeout(() => setInviteCopied(false), 2000)
+    } catch {
+      setActionError('Could not copy the link — select it and copy manually.')
+    }
+  }
 
   const loadPredictions = useCallback(async () => {
     try {
@@ -669,7 +799,95 @@ function LeagueView({ token, userId, league, onBack }) {
       <button className="btn btn-secondary" onClick={onBack}>
         ← Back to leagues
       </button>
-      <h3 className="section-title">{league.name}</h3>
+      <div className="league-head">
+        <h3 className="section-title">{league.name}</h3>
+        <div className="row">
+          {isOwner && !renaming && (
+            <button
+              className="btn btn-secondary btn-sm"
+              type="button"
+              onClick={() => {
+                setNewName(league.name)
+                setRenaming(true)
+              }}
+              data-testid="rename-league"
+            >
+              Rename
+            </button>
+          )}
+          {isOwner && (
+            <button
+              className="btn btn-danger btn-sm"
+              type="button"
+              onClick={handleDelete}
+              disabled={actionBusy}
+              data-testid="delete-league"
+            >
+              Delete league
+            </button>
+          )}
+          {!isOwner && (
+            <button
+              className="btn btn-danger btn-sm"
+              type="button"
+              onClick={handleLeave}
+              disabled={actionBusy}
+              data-testid="leave-league"
+            >
+              Leave league
+            </button>
+          )}
+        </div>
+      </div>
+
+      {renaming && (
+        <form className="form-row" onSubmit={handleRename}>
+          <input
+            className="input"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            maxLength={100}
+            aria-label="League name"
+            required
+          />
+          <button type="submit" className="btn btn-primary" disabled={actionBusy}>
+            Save name
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => setRenaming(false)}
+          >
+            Cancel
+          </button>
+        </form>
+      )}
+
+      <div className="invite-row">
+        <span className="muted">Invite link</span>
+        <input
+          className="input"
+          readOnly
+          value={inviteUrl}
+          onFocus={(e) => e.target.select()}
+          aria-label="Invite link"
+          data-testid="invite-link"
+        />
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={copyInvite}
+          data-testid="copy-invite"
+        >
+          {inviteCopied ? 'Copied!' : 'Copy link'}
+        </button>
+      </div>
+      <p className="hint">
+        Anyone with this link can join. Invite code:{' '}
+        <span className="code">{league.invite_code}</span>
+      </p>
+
+      {actionError && <p className="error">{actionError}</p>}
 
       <form className="form-row" onSubmit={handlePost} style={{ flexWrap: 'wrap' }}>
         <input
