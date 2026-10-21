@@ -4,6 +4,61 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
+## Milestone 18 — Input validation + cascade integrity (DONE)
+
+```
+TITLE: Milestone 18 — Input validation + cascade integrity
+
+GOAL
+Harden user input and database integrity with small, low-risk changes.
+
+CONSTRAINTS (must follow)
+- Do not expose emails (nicknames only)
+- Only a prediction's creator may resolve it; resolve once; +stake/-stake; leaderboard derived
+- Picks stay gated until the caller has picked or the prediction is resolved
+- bcrypt pinned 4.0.1; backend/.env never committed
+- Migration must be idempotent (safe to run twice) and PostgreSQL-specific
+- Do not run the migration against a shared/production DB without approval
+- Do not start long-running servers
+
+BACKEND
+1. Validation (backend/app/schemas.py):
+   - PredictionCreate.question: trim whitespace, enforce 1-500 chars, reject blank.
+   - LeagueCreate.name: trim whitespace, enforce 1-100 chars, reject blank.
+2. Cascade deletes (backend/app/models.py):
+   - ondelete="CASCADE" on memberships(league_id, user_id), predictions(league_id,
+     creator_id), picks(prediction_id, user_id), leagues(owner_id).
+   - passive_deletes=True on the owning relationships so Postgres performs the cascade
+     instead of the ORM nulling non-null child FKs first.
+3. Migration (backend/migrations/migrate_v18_cascades.py):
+   - Discover existing FK constraint names dynamically via pg_constraint; do not hardcode.
+   - Drop/recreate each target FK with ON DELETE CASCADE.
+   - Idempotent: a second run changes nothing and exits 0.
+4. Tests (backend/tests/test_m18_validation.py, conftest.py):
+   - Blank/whitespace and over-limit question/league name -> 422; valid values -> 201.
+   - Cascade checks delete a user/league and assert dependent rows are gone.
+   - Test the migration against a throwaway schema and assert idempotency.
+   - conftest seeds one user + league only when the tables are empty (needed by M14 tests).
+
+FRONTEND
+5. frontend/src/App.jsx: trim + validate the same limits client-side, show inline errors,
+   add maxLength={500} / maxLength={100}.
+
+VERIFY
+- `cd backend && python3 -m pytest tests -q` -> all green
+- `python3 -c "import app.main"` -> OK
+- Migration runs twice cleanly
+- `cd frontend && npm run build` -> OK
+
+RESULT (implemented)
+- Backend by Cloudroom on branch m18-input-hardening (commit 3de5a2e); frontend + docs by
+  the other agent. Verified on a scratch PostgreSQL 16 instance (never touched Neon):
+  27 tests pass, build passes. Migration is written but NOT yet applied to Neon — see
+  DEPLOY.md.
+```
+
+---
+
 ## Milestone 17 — Auth hardening: password policy, rate limiting, security headers (DONE)
 
 ```

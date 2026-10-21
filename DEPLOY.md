@@ -23,8 +23,17 @@ cd backend
 DATABASE_URL="<render's database url>" .venv/bin/python create_tables.py
 ```
 
-(Or run it locally against Neon now — `create_tables.py` is idempotent, and
-`migrate_v4.py` too if the DB predates Milestone 4.)
+For an **existing** database, also run the idempotent migrations (safe to repeat):
+
+```bash
+cd backend
+DATABASE_URL="<render's database url>" .venv/bin/python -m migrations.migrate_v14_auto_resolve
+DATABASE_URL="<render's database url>" .venv/bin/python -m migrations.migrate_v18_cascades
+```
+
+`create_tables.py` and all `migrations/*` scripts are idempotent. Run
+`migrate_v18_cascades` once on Neon to switch the core foreign keys to
+`ON DELETE CASCADE` (the models already declare it; the script updates an older DB).
 
 ## 2. Backend on Render
 

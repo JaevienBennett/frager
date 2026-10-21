@@ -57,8 +57,9 @@ React (Vercel)  ──HTTP/JSON──▶  FastAPI (Render)  ──SQLAlchemy─�
   so it can never drift out of sync.
 - **Anti-snipe:** the pick list is gated server-side — you can't see others' picks until you
   commit your own (or the prediction is resolved).
-- **Hardened:** auth endpoints are rate limited, passwords need 8+ characters, and every
-  response carries security headers.
+- **Hardened:** auth endpoints are rate limited, passwords need 8+ characters, inputs are
+  length-limited (league name 1–100, question 1–500), and every response carries security
+  headers.
 
 ## Project layout
 
@@ -81,8 +82,10 @@ frager/
 │   ├── create_tables.py         create_all against DATABASE_URL
 │   ├── migrate_v4.py            ALTER predictions (resolution columns)
 │   ├── migrate_v7.py            ALTER users (nickname, backfill + unique index)
-│   ├── migrations/              migrate_v14_auto_resolve.py
-│   ├── tests/                   test_smoke_flows.py, test_m14_auto_resolve.py
+│   ├── migrations/              migrate_v14_auto_resolve.py,
+│   │                            migrate_v18_cascades.py
+│   ├── tests/                   conftest.py, test_smoke_flows.py,
+│   │                            test_m14_auto_resolve.py, test_m18_validation.py
 │   ├── render.yaml
 │   └── requirements.txt
 └── frontend/
@@ -93,7 +96,8 @@ frager/
 
 ```bash
 cd backend
-python -m pytest tests          # 10 tests: smoke flows + auto-resolve
+pip install pytest httpx       # test runner + TestClient transport (if not installed)
+python -m pytest tests         # 27 tests: smoke flows, auto-resolve, validation + cascades
 ```
 
 ```bash
@@ -116,7 +120,8 @@ source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env                 # set DATABASE_URL, SECRET_KEY, ACCESS_TOKEN_EXPIRE_MINUTES
 python create_tables.py              # create tables (and run migrate_v*.py on existing DBs)
-python migrations/migrate_v14_auto_resolve.py   # only for DBs created before M14
+python -m migrations.migrate_v14_auto_resolve   # only for DBs created before M14
+python -m migrations.migrate_v18_cascades       # only for DBs created before M18
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -160,6 +165,11 @@ other users — only nicknames.
 - **Rate limits:** `POST /api/auth/signup` allows 5/minute and `POST /api/auth/login`
   10/minute per IP; exceeding either returns `429`.
 - **Passwords:** signup and login require 8–128 characters.
+- **Input limits:** league names are 1–100 characters; prediction questions are 1–500
+  (whitespace is trimmed). Validation is enforced on both the client and the server.
+- **Deleting data:** core foreign keys are `ON DELETE CASCADE`, so removing a user or league
+  cleans up its memberships, predictions, and picks. Existing databases need
+  `python -m migrations.migrate_v18_cascades` once (see DEPLOY.md).
 - **Free-tier hosting:** the API sleeps after inactivity, so the first request can take
   ~30–60s to wake. The frontend shows a friendly "Waking up the server…" state and
   auto-retries, rather than failing.

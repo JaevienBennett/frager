@@ -32,7 +32,7 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 - **Mobile:** Responsive CSS, table scrolls. **OK**.
 - **Validation:** Stake parsed strictly client-side; inline errors. **OK**.
 - **A11y:** Segmented toggle has `role="group"` and `aria-pressed`. **OK**.
-- **Gaps (MED):** No form validation for empty question beyond `required`; no debouncing; large lists unvirtualized (small scale fine).
+- **Gaps (MED):** No form validation for empty question beyond `required`; no debouncing; large lists unvirtualized (small scale fine). — **FIXED (M18):** client trims and validates the same 1–500 / 1–100 limits as the server (still no debouncing/unvirtualization, fine at this scale).
 
 ## 4) Picks
 - **Update before resolve:** `make_pick` allows updating existing pick (200) if user already picked. **OK**.
@@ -63,7 +63,7 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 
 ## 8) Predictions
 - **Creation:** Works with/without game link (M14). **OK**.
-- **Question length:** No max in schema (model allows up to 500 chars). **OK**.
+- **Question length:** No max in schema (model allows up to 500 chars). **OK**. — **FIXED (M18):** `PredictionCreate.question` trims and enforces 1–500; `LeagueCreate.name` 1–100.
 - **Resolved state UI:** Banner + ticks/swing + auto-resolution. **OK**.
 - **Only creator resolves:** Enforced. **OK**.
 
@@ -90,7 +90,7 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 
 ## 13) Data Integrity
 - **FKs:** Present. **OK**.
-- **Cascades:** Not explicitly set (defaults). Usually fine if deletes handled carefully. **LOW**.
+- **Cascades:** Not explicitly set (defaults). Usually fine if deletes handled carefully. **LOW**. — **FIXED (M18):** core FKs are `ON DELETE CASCADE` (models + `migrate_v18_cascades.py`); `passive_deletes=True` on the owning relationships.
 - **Unique constraints:** `users.email`, `users.nickname`, `leagues.invite_code`, `memberships(league_id,user_id)`, `picks(prediction_id,user_id)`. **OK**.
 
 ## 14) Misc
@@ -111,11 +111,11 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 3. **Password minimum length**. — **DONE (M17)**
 
 ## Still open (not yet scheduled)
-- Frontend form validation for a blank/oversized question (M3 gap).
-- `Prediction.question` has no explicit max length in the Pydantic schema (model caps at 500).
-- FK `ondelete` cascades not specified on memberships/picks (deletes handled manually).
 - No token refresh / revocation list (tokens expire via `ACCESS_TOKEN_EXPIRE_MINUTES`).
 - WS connection manager is in-process (single-instance hosting assumed).
+- `migrate_v18_cascades.py` has not been applied to Neon yet — required once at deploy time
+  (see DEPLOY.md). Code works without it until delete operations are added.
+- No debouncing / list virtualization (fine at current scale).
 
 ## Implemented Fixes
 
@@ -145,7 +145,21 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 - `frontend/src/App.jsx`: `minLength={8}` on the password field + "8+ chars" hint.
 - `backend/requirements.txt`: added `slowapi`.
 
+### M18 — Input validation + cascade integrity
+- `backend/app/schemas.py`: `PredictionCreate.question` trims and enforces 1–500 chars;
+  `LeagueCreate.name` trims and enforces 1–100 chars.
+- `backend/app/models.py`: `ondelete="CASCADE"` on the seven core FKs; `passive_deletes=True`
+  on the owning relationships so Postgres performs the delete.
+- `backend/migrations/migrate_v18_cascades.py`: dynamic, idempotent migration that rewrites
+  existing FKs to `ON DELETE CASCADE` (not yet applied to Neon).
+- `backend/tests/test_m18_validation.py` + `backend/tests/conftest.py`: validation, schema
+  limits, migration idempotency, and cascade-delete coverage.
+- `frontend/src/App.jsx`: client-side trim + length validation and `maxLength` for league
+  names and prediction questions.
+
 ### Verification
-- `python -m pytest backend/tests` (from `backend/`) → **10 passed**.
+- `python3 -m pytest tests -q` (from `backend/`, against a scratch PostgreSQL 16 instance)
+  → **27 passed** (Neon was not touched).
 - `npm run build` (in `frontend/`) → **build succeeded**.
-- `python -c "import app.main"` → imports cleanly.
+- `python3 -c "import app.main"` → imports cleanly.
+- `migrate_v18_cascades` run twice on a legacy schema → 7/7 changed, then 0/7 changed.
