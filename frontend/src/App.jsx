@@ -405,6 +405,8 @@ function LeagueView({ token, userId, league, onBack }) {
   const [pickSaved, setPickSaved] = useState({})
   const savedTimers = useRef({})
   const detailRequested = useRef({})
+  const wsRef = useRef(null)
+  const wsReconnectRef = useRef(null)
 
   const auth = { Authorization: `Bearer ${token}` }
 
@@ -471,6 +473,83 @@ function LeagueView({ token, userId, league, onBack }) {
       }
     }
   }, [loaded, predictions, details, loadDetail])
+
+  useEffect(() => {
+    let reconnectAttempts = 0
+    let closed = false
+
+    function connect() {
+      if (closed) return
+      try {
+        const wsBase = API.replace(/^http/, 'ws')
+        const ws = new WebSocket(
+          `${wsBase}/ws/leagues/${league.id}?token=${encodeURIComponent(token)}`,
+        )
+        wsRef.current = ws
+        ws.onopen = () => {
+          reconnectAttempts = 0
+        }
+        ws.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data)
+            if (msg.type === 'prediction_created') {
+              loadPredictions()
+              loadLeaderboard()
+              return
+            }
+            if (msg.type === 'pick_updated') {
+              loadPredictions()
+              if (msg.prediction_id) {
+                loadDetail(msg.prediction_id)
+              }
+              loadLeaderboard()
+              return
+            }
+            if (msg.type === 'prediction_resolved') {
+              loadPredictions()
+              loadLeaderboard()
+              if (msg.prediction_id) {
+                loadDetail(msg.prediction_id)
+              }
+              return
+            }
+            if (msg.type === 'leaderboard_updated') {
+              loadLeaderboard()
+            }
+          } catch {}
+        }
+        ws.onclose = () => {
+          if (closed) return
+          reconnectAttempts += 1
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 5000)
+          wsReconnectRef.current = setTimeout(connect, delay)
+        }
+        ws.onerror = () => {
+          try {
+            ws.close()
+          } catch {}
+        }
+      } catch {
+        reconnectAttempts += 1
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 5000)
+        wsReconnectRef.current = setTimeout(connect, delay)
+      }
+    }
+
+    connect()
+
+    return () => {
+      closed = true
+      if (wsReconnectRef.current) {
+        clearTimeout(wsReconnectRef.current)
+      }
+      if (wsRef.current) {
+        try {
+          wsRef.current.close()
+        } catch {}
+      }
+    }
+  }, [league.id, token, loadPredictions, loadLeaderboard, loadDetail])
 
   function updatePickForm(predictionId, field, value) {
     setPicks((prev) => ({
