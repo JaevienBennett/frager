@@ -287,11 +287,20 @@ function Leagues({ token, userId }) {
   async function handleCreate(e) {
     e.preventDefault()
     setError('')
+    const trimmed = name.trim()
+    if (!trimmed) {
+      setError('League name is required.')
+      return
+    }
+    if (trimmed.length > 100) {
+      setError('League name must be 100 characters or fewer.')
+      return
+    }
     try {
       const league = await fetchJson(`${API}/api/leagues`, {
         method: 'POST',
         headers: { ...auth, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name: trimmed }),
       })
       setNewLeague(league)
       setName('')
@@ -327,6 +336,7 @@ function Leagues({ token, userId }) {
           placeholder="league name"
           value={name}
           onChange={(e) => setName(e.target.value)}
+          maxLength={100}
           required
         />
         <button type="submit" className="btn btn-primary">
@@ -566,11 +576,20 @@ function LeagueView({ token, userId, league, onBack }) {
   async function handlePost(e) {
     e.preventDefault()
     setError('')
+    const trimmed = question.trim()
+    if (!trimmed) {
+      setError('Enter a question.')
+      return
+    }
+    if (trimmed.length > 500) {
+      setError('Question must be 500 characters or fewer.')
+      return
+    }
     try {
       await fetchJson(`${API}/api/leagues/${league.id}/predictions`, {
         method: 'POST',
         headers: { ...auth, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, game_url: gameUrl || null }),
+        body: JSON.stringify({ question: trimmed, game_url: gameUrl || null }),
       })
       setQuestion('')
       setGameUrl('')
@@ -658,6 +677,7 @@ function LeagueView({ token, userId, league, onBack }) {
           placeholder="Ask a yes/no question…"
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
+          maxLength={500}
           required
         />
         <input
