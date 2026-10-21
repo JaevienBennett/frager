@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from . import rate_limit
 from .models import User
 from .schemas import Credentials, SignupRequest, Token, UserOut
 from .security import (
@@ -15,7 +16,8 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/signup", response_model=Token, status_code=status.HTTP_201_CREATED)
-def signup(body: SignupRequest, db: Session = Depends(get_db)):
+@rate_limit.limiter.limit("5/minute")
+def signup(request: Request, body: SignupRequest, db: Session = Depends(get_db)):
     existing = db.query(User).filter(User.email == body.email).first()
     if existing is not None:
         raise HTTPException(
@@ -40,7 +42,8 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=Token)
-def login(body: Credentials, db: Session = Depends(get_db)):
+@rate_limit.limiter.limit("10/minute")
+def login(request: Request, body: Credentials, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == body.email).first()
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(

@@ -230,14 +230,15 @@ export default function App() {
                     maxLength={24}
                   />
                 )}
-                <input
-                  className="input"
-                  type="password"
-                  placeholder="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
+            <input
+              className="input"
+              type="password"
+              placeholder="password (8+ chars)"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={8}
+            />
                 <button type="submit" className="btn btn-primary">
                   {mode === 'login' ? 'Log in' : 'Sign up'}
                 </button>
