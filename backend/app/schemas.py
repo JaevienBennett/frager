@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, field_validator
 
 class Credentials(BaseModel):
     email: str
-    password: str
+    password: str = Field(min_length=1)
 
 
 class SignupRequest(Credentials):
@@ -71,7 +71,7 @@ class PredictionOut(BaseModel):
 
 class PickCreate(BaseModel):
     side: Literal["yes", "no"]
-    stake: int = Field(default=0, ge=0)
+    stake: int = Field(default=0, ge=0, le=1000000)
 
 
 class PickOut(BaseModel):
