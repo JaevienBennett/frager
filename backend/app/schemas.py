@@ -35,18 +35,31 @@ class UserOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+def normalize_league_name(value: str) -> str:
+    value = value.strip()
+    if not value:
+        raise ValueError("league name must not be blank")
+    if len(value) > 100:
+        raise ValueError("league name must be at most 100 characters")
+    return value
+
+
 class LeagueCreate(BaseModel):
     name: str
 
     @field_validator("name")
     @classmethod
     def name_normalized(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("league name must not be blank")
-        if len(value) > 100:
-            raise ValueError("league name must be at most 100 characters")
-        return value
+        return normalize_league_name(value)
+
+
+class LeagueUpdate(BaseModel):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def name_normalized(cls, value: str) -> str:
+        return normalize_league_name(value)
 
 
 class LeagueOut(BaseModel):

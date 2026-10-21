@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from .membership import is_member
 from .models import League, Membership, User
-from .schemas import JoinRequest, LeagueCreate, LeagueOut
+from .schemas import JoinRequest, LeagueCreate, LeagueOut, LeagueUpdate
 from .security import get_current_user, get_db
 
 router = APIRouter(prefix="/api/leagues", tags=["leagues"])
@@ -105,3 +105,70 @@ def join_league(
     db.add(Membership(league_id=league.id, user_id=user.id))
     db.commit()
     return league_out(db, league)
+
+
+@router.post("/{league_id}/leave")
+def leave_league(
+    league_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    league = db.get(League, league_id)
+    if league is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="League not found")
+    membership = (
+        db.query(Membership)
+        .filter(Membership.league_id == league_id, Membership.user_id == user.id)
+        .first()
+    )
+    if membership is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="League not found")
+    if league.owner_id == user.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Owner cannot leave; delete the league instead",
+        )
+    db.delete(membership)
+    db.commit()
+    return {"ok": True}
+
+
+@router.patch("/{league_id}", response_model=LeagueOut)
+def update_league(
+    league_id: int,
+    body: LeagueUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    league = db.get(League, league_id)
+    if league is None or not is_member(db, league_id, user.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="League not found")
+    if league.owner_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the league owner can rename it",
+        )
+    league.name = body.name
+    db.commit()
+    db.refresh(league)
+    return league_out(db, league)
+
+
+@router.delete("/{league_id}")
+def delete_league(
+    league_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    league = db.get(League, league_id)
+    if league is None or not is_member(db, league_id, user.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="League not found")
+    if league.owner_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the league owner can delete it",
+        )
+    # memberships / predictions / picks go with it via ON DELETE CASCADE
+    db.delete(league)
+    db.commit()
+    return {"ok": True}
