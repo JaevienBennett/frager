@@ -28,6 +28,17 @@ def create_access_token(subject: str) -> str:
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
+def decode_access_token(token: str) -> dict:
+    try:
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -48,15 +59,13 @@ def get_current_user(
     if credentials is None:
         raise unauthorized
     try:
-        payload = jwt.decode(
-            credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM]
-        )
+        payload = decode_access_token(credentials.credentials)
         subject = payload.get("sub")
-    except JWTError:
+    except HTTPException:
         raise unauthorized
     if subject is None:
         raise unauthorized
-    user = db.get(User, int(subject)) if subject.isdigit() else None
+    user = db.get(User, int(subject)) if str(subject).isdigit() else None
     if user is None:
         raise unauthorized
     return user

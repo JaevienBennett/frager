@@ -15,6 +15,7 @@ from .schemas import (
 from .security import get_current_user, get_db
 from .services import espn_client
 from .services import sports_resolver
+from . import ws
 
 router = APIRouter(prefix="/api", tags=["predictions"])
 
@@ -102,6 +103,11 @@ def create_prediction(
     db.add(prediction)
     db.commit()
     db.refresh(prediction)
+    try:
+        import asyncio
+        asyncio.create_task(ws.manager.broadcast(league_id, {"type": "prediction_created", "league_id": league_id, "prediction_id": prediction.id}))
+    except Exception:
+        pass
     return prediction_out(prediction)
 
 
@@ -119,7 +125,13 @@ def list_predictions(
         .all()
     )
     for p in predictions:
-        sports_resolver.try_auto_resolve(p, db)
+        if sports_resolver.try_auto_resolve(p, db):
+            try:
+                import asyncio
+                asyncio.create_task(ws.manager.broadcast(p.league_id, {"type": "prediction_resolved", "league_id": p.league_id, "prediction_id": p.id, "outcome": p.resolved_outcome}))
+                asyncio.create_task(ws.manager.broadcast(p.league_id, {"type": "leaderboard_updated", "league_id": p.league_id}))
+            except Exception:
+                pass
     return [prediction_out(p) for p in predictions]
 
 
@@ -161,6 +173,12 @@ def make_pick(
         response.status_code = status.HTTP_201_CREATED
     db.commit()
     db.refresh(pick)
+    try:
+        import asyncio
+        asyncio.create_task(ws.manager.broadcast(prediction.league_id, {"type": "pick_updated", "league_id": prediction.league_id, "prediction_id": prediction.id}))
+        asyncio.create_task(ws.manager.broadcast(prediction.league_id, {"type": "leaderboard_updated", "league_id": prediction.league_id}))
+    except Exception:
+        pass
     return pick_out(pick, user.nickname)
 
 
@@ -175,7 +193,13 @@ def get_prediction(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Prediction not found"
         )
-    sports_resolver.try_auto_resolve(prediction, db)
+    if sports_resolver.try_auto_resolve(prediction, db):
+        try:
+            import asyncio
+            asyncio.create_task(ws.manager.broadcast(prediction.league_id, {"type": "prediction_resolved", "league_id": prediction.league_id, "prediction_id": prediction.id, "outcome": prediction.resolved_outcome}))
+            asyncio.create_task(ws.manager.broadcast(prediction.league_id, {"type": "leaderboard_updated", "league_id": prediction.league_id}))
+        except Exception:
+            pass
     caller_has_pick = any(p.user_id == user.id for p in prediction.picks)
     picks_visible = caller_has_pick or prediction.status == "resolved"
     detail = prediction_out(prediction).model_dump()
@@ -232,6 +256,12 @@ def resolve_prediction(
     prediction.resolution_source = "manual"
     db.commit()
     db.refresh(prediction)
+    try:
+        import asyncio
+        asyncio.create_task(ws.manager.broadcast(prediction.league_id, {"type": "prediction_resolved", "league_id": prediction.league_id, "prediction_id": prediction.id, "outcome": body.outcome}))
+        asyncio.create_task(ws.manager.broadcast(prediction.league_id, {"type": "leaderboard_updated", "league_id": prediction.league_id}))
+    except Exception:
+        pass
     return prediction_out(prediction)
 
 
