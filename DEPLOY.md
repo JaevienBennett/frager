@@ -40,6 +40,16 @@ This is required before the M19 league-delete endpoint is used — without it,
 to the current Neon database. Run `migrate_v20_sessions` once on Neon to add
 `users.token_version` and the hashed `refresh_tokens` table (required for M20 sessions).
 
+> **Order matters.** Migrations must run *before* the new code is deployed, because the
+> new backend code selects columns that do not exist yet. If you push to `main` first,
+> Render deploys within a minute and the API starts throwing `500` on every request that
+> touches the changed table (this happened during M20: `POST /api/auth/login` returned 500
+> until `migrate_v20_sessions` was applied to Neon). Safe sequence for a new migration:
+>
+> 1. run the migration against Neon,
+> 2. confirm it is idempotent by running it a second time (expect 0 changes),
+> 3. only then push the code that depends on it.
+
 ## 2. Backend on Render
 
 `backend/render.yaml` is committed, so Render can import it — but the manual

@@ -191,7 +191,10 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
   → **61 passed** (45 pre-existing + 16 M20). Neon was not touched.
 - `npm run build` (in `frontend/`) → **build succeeded**.
 - `python3 -c "import app.main"` → imports cleanly.
-- `migrate_v20_sessions` run twice on a legacy schema → changes applied, then 0/0 change(s).
+- `migrate_v20_sessions` run twice on a legacy schema → changes applied, then 0 change(s);
+  also applied to Neon (4 changes, then 0 on a repeat run).
+- Production smoke test after the M20 deploy: signup → `me` → refresh → replay → logout-all
+  all behaved as designed (probe user deleted afterwards).
 - `migrate_v18_cascades` run twice on a legacy schema → 7/7 changed, then 0/7 changed;
   later applied to Neon (7/7, then 0/7 on a repeat run).
 - M19 delete tests fail with an FK violation on a DB without the M18 cascade, confirming
