@@ -4,7 +4,243 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
-## Milestone 13 — Logo fix: chip-with-question-mark brand mark [presentation only]
+## Milestone 17 — Auth hardening: password policy, rate limiting, security headers (DONE)
+
+```
+TITLE: Milestone 17 — Auth Hardening: Password policy, Rate limiting, Security headers
+
+GOAL
+Harden auth and security with minimal risk. Enforce minimum password length, add rate
+limiting to auth endpoints, add security headers middleware.
+
+CONSTRAINTS (must follow)
+- Do not expose emails to others (nicknames only)
+- Preserve all existing behavior unless necessary for security
+- backend/.env never committed
+- bcrypt pinned 4.0.1
+- All tests still pass; frontend build passes
+- No long-running servers started
+
+1) PASSWORD POLICY
+- Backend: Update `backend/app/schemas.py` - SignupRequest/Credentials? Enforce minimum
+  password length. Set `password: str = Field(min_length=8, max_length=128)` for
+  SignupRequest and Login (Credentials). Also keep nickname validation as-is.
+- Frontend: Update signup/login form in `frontend/src/App.jsx` to enforce min length 8 on
+  password (add `minLength={8}` attribute). Also update placeholder text to hint
+  "password (8+ chars)".
+
+2) RATE LIMITING
+- Add slowapi dependency to `backend/requirements.txt` (`slowapi>=0.1.9`)
+- Create `backend/app/rate_limit.py` with a limiter instance (e.g. using
+  `Limiter(key_func=slowapi.util.get_remote_address)`)
+- Wire limiter in `backend/app/main.py`: add `app.state.limiter = limiter`, exception
+  handler for `RateLimitExceeded`
+- Apply rate limits to auth endpoints:
+  - POST `/api/auth/signup` - e.g. "5/minute"
+  - POST `/api/auth/login` - e.g. "10/minute" (to avoid blocking legitimate users while
+    deterring brute force)
+- Use appropriate decorator/route-based limits. Keep other routes unlimited for now (or
+  conservative). Document limits in comments.
+
+3) SECURITY HEADERS
+- Add middleware in `backend/app/main.py` to set security headers on all responses:
+  - `X-Content-Type-Options: nosniff`
+  - `X-Frame-Options: DENY`
+  - `X-XSS-Protection: 0` (modern practice) or omit; prefer modern
+  - `Referrer-Policy: strict-origin-when-cross-origin`
+  - `Permissions-Policy: geolocation=(), camera=(), microphone=()`
+  - `Strict-Transport-Security: max-age=31536000; includeSubDomains` (safe for HTTPS
+    deployments like Render)
+- Implement as simple ASGI middleware class or via @app.middleware("http").
+
+4) TESTS & VERIFICATION
+- Update smoke tests to use password >= 8 chars (already do in some cases? Check). Current
+  test uses "pass123456" (10 chars) - OK.
+- All existing tests still pass (M14 + smoke)
+- Frontend builds
+- Backend imports successfully
+
+DELIVERABLES
+- Updated files as needed
+- Summary of changes + test/build results
+```
+
+---
+
+## Milestone 16 — Real-time updates via WebSockets (DONE)
+
+```
+TITLE: Milestone 16 — Real-time updates via WebSockets
+
+GOAL
+Add lightweight WebSockets to Frager so leaderboard/predictions update live per spec
+("Leaderboard updates live (real-time)"). Keep existing HTTP REST API working (backward
+compatible). No breaking changes.
+
+CONSTRAINTS (must follow)
+- Only creator resolves predictions
+- Resolve once; scoring +stake/-stake; leaderboard derived never stored
+- Picks gated until you've picked or resolved
+- Emails never exposed (nicknames only)
+- backend/.env never committed
+- bcrypt pinned 4.0.1
+- Do not break existing tests; all must still pass
+- Frontend build must pass
+- No long-running servers started in report
+
+SCOPE
+1) Backend
+- Add dependency `websockets` to `backend/requirements.txt`
+- Create `backend/app/ws.py` (or similar): connection manager to track connections by
+  league_id. Support connect/disconnect/broadcast to all members in a league.
+- Add WebSocket endpoint: `GET /ws/leagues/{league_id}`. Authenticate via JWT (browser WS
+  cannot set Authorization header easily). Accept token as query param `?token=<jwt>` OR as
+  first message; prefer token in query param for simplicity. Validate token, require user is
+  member of league, then subscribe.
+- Define event types (JSON): e.g. `{"type":"prediction_created","league_id":...,
+  "prediction_id":...}`, `{"type":"pick_updated",...}`, `{"type":"prediction_resolved",...}`,
+  `{"type":"leaderboard_updated",...}`. Keep payload small (ids only).
+- Publish events on mutations in `routes_predictions.py`:
+  - create_prediction (after commit): broadcast `prediction_created`
+  - make_pick (after commit): broadcast `pick_updated`
+  - resolve_prediction (after commit): broadcast `prediction_resolved` + `leaderboard_updated`
+- Handle disconnects cleanly, avoid leaking connections. Thread-safe store (simple dict is
+  fine for single-process; note Render single instance for now).
+- Add CORS/WS handling - no change to existing CORS.
+
+2) Frontend
+- In `frontend/src/App.jsx` (LeagueView): when viewing a league, open WebSocket to
+  `VITE_API_URL` (or derive ws:// from http://, wss:// from https://). Pass token via query
+  param.
+- On connect: log minimally; on message: react to event types. For each relevant event for
+  current league, trigger refetches.
+- Reconnect with exponential backoff on close/error (max ~5s). Stop when leaving league
+  (onBack).
+- Graceful fallback: if WS unavailable, just rely on existing HTTP behavior (no regression).
+- Show no intrusive UI changes; keep existing states.
+
+3) Testing & Verification
+- Existing tests must still pass (M14 + smoke). Add minimal smoke test for WS
+  import/manager if easy, but not required to hit network.
+- Frontend builds (`npm run build`). Backend imports successfully.
+
+DELIVERABLES
+- Updated `backend/requirements.txt`
+- New `backend/app/ws.py` (WS manager + helpers)
+- Modified `backend/app/main.py` to register WS endpoint
+- Modified `backend/app/routes_predictions.py` to publish events
+- Modified `frontend/src/App.jsx` to add WS client in LeagueView
+- Short summary of changes + test/build results
+```
+
+---
+
+## Milestone 15 — Audit & gap-fill (DONE)
+
+```
+TITLE: Milestone 15 — Audit & Gap-Fill (Frager polish + completeness)
+
+CONTEXT
+Frager is a social yes/no prediction app (wager without risk). Repo
+https://github.com/JaevienBennett/frager, local ~/projects/frager, branch main.
+Stack: React/Vite frontend -> FastAPI backend -> PostgreSQL (Neon). Deploy: Vercel + Render
++ Neon.
+M0-M14 done: auth, leagues/invites, predictions+picks+stakes, gated reveal, creator
+resolution, derived leaderboard, NFL ESPN auto-resolution.
+Spec says v1 includes "Leaderboard updates live (real-time)" with WebSockets (FastAPI).
+Also general polish.
+
+GOAL
+Do a thorough audit of the codebase against SPEC.md, PROMPTS.md, README.md, current UX, and
+common gaps. Propose and implement high-value, low-risk fixes. Prioritize correctness,
+safety, and not breaking existing behavior.
+
+CONSTRAINTS (must follow)
+- Do not expose emails to non-owners in API responses (nicknames only)
+- Only creator resolves predictions (manual). Never allow non-creator to resolve
+- Resolve once; scoring remains +stake/-stake; leaderboard derived (never stored)
+- Picks gated until you've picked or resolved
+- backend/.env never committed
+- bcrypt pinned 4.0.1
+- New columns require idempotent migrate_v*.py (nullable -> backfill -> NOT NULL only where
+  required)
+- Auto-resolution must never overwrite manual resolution
+- All existing tests must still pass; frontend build must pass
+
+AUDIT AREAS
+1) Real-time (WebSockets) - SPEC lists WebSockets for live leaderboard/predictions. Check if
+   missing. If feasible with minimal deps, add lightweight WS to push updates on
+   pick/resolve/post/create so UI updates without full reload. If not feasible cleanly,
+   document why and suggest alternative.
+2) API robustness - validation, error messages, 409/403/404 consistency, auth on all
+   protected routes, CORS correct
+3) Frontend UX - loading states, error handling, empty states, mobile layout, form
+   validation, accessibility basics
+4) Picks - updating pick before resolve works? Gating correct? Stake validation? Max stake
+   enforcement?
+5) Leaderboard - correctness of derived calc, sorting (points desc, accuracy desc, user_id
+   tie-break)
+6) Leagues - invite code security/format, join flow, membership checks everywhere
+7) Auth - token expiry/refresh, logout, session persistence, password requirements
+8) Predictions - question length, creating with/without game link, resolved state UI
+9) Migrations - ensure all migrate_v*.py are idempotent, run safely
+10) Tests - add tests for core flows if missing (auth, leagues, predictions, picks, resolve,
+    leaderboard). At minimum add smoke tests
+11) Security - secrets, SQL injection (SQLAlchemy ORM used), rate limiting? CORS, headers
+12) Deployment - check Render/Vercel config assumptions, env vars, build commands
+13) Data integrity - foreign keys, cascades, unique constraints
+14) Misc - README accuracy, dead code, TODOs/FIXMEs
+
+DELIVERABLES
+- AUDIT_REPORT.md with: findings (high/med/low), evidence (file:line), recommendation,
+  effort estimate
+- Fixes implemented for HIGH priority items only unless explicitly justified. Group commits
+  logically.
+- If adding WS, keep backward compatible (HTTP fallback)
+- Tests for fixed issues
+- Frontend build passes, backend tests pass
+- Update README if behavior changes materially
+```
+
+---
+
+## Milestone 14 — NFL auto-resolution from ESPN game links (DONE)
+
+```
+Add optional NFL auto-resolution to Frager: when a prediction is created with an ESPN NFL
+game link, the app can look up the final score and settle the prediction automatically.
+Auto-resolution must never overwrite a manual resolution.
+
+Backend (FastAPI):
+1. Add columns to Prediction: external_game_id, sport, league, home_team, away_team,
+   game_time, resolution_source, auto_resolved_at (all nullable).
+2. Add an idempotent migration `backend/migrations/migrate_v14_auto_resolve.py`
+   (nullable columns -> backfill -> constraints only where required; safe to run twice).
+3. Add `backend/app/services/espn_client.py`:
+   - extract_nfl_event_id(game_url) -> validates a full espn.com nfl game link
+   - fetch_nfl_event(event_id) -> pulls the event JSON
+   - parse_nfl_result(event) -> final score / winner
+4. Add `backend/app/services/sports_resolver.py` with try_auto_resolve(prediction, db):
+   - only for predictions that are still open and have an external_game_id
+   - resolves to yes/no based on the away-team score (the "no" side of the question)
+   - sets resolution_source = "espn" and auto_resolved_at
+   - never overwrite a manual resolution
+5. Wire it lazily: on create (if the game is already final) and on read of predictions
+   (lazy on-read). No background scheduler needed.
+6. Accept an optional `game_url` in the prediction create payload; return 400 on an invalid
+   ESPN link.
+
+Frontend (React):
+7. Add an optional "game link" field to the post-prediction form, validated client-side
+   (must look like an espn.com NFL game link) and shown as a link on the prediction.
+
+Verify: migration runs twice cleanly, tests pass (add backend/tests/test_m14_auto_resolve.py),
+frontend build passes. Report files changed + commands. Do not start long-running servers.
+```
+
+---
+
+## Milestone 13 — Logo fix: chip-with-question-mark brand mark [presentation only] (DONE)
 
 ```
 Replace the current checkmark logo with a coin/chip mark that matches the product

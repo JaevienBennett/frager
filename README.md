@@ -25,6 +25,11 @@ deployed end to end.
 - **Resolve** — the creator settles the outcome.
 - **Results & leaderboard** — correct picks earn `+stake`, wrong picks lose `−stake`;
   a derived leaderboard ranks members by points, then accuracy.
+- **Live updates** — open leagues push picks, resolutions, and leaderboard changes over a
+  WebSocket, so the page updates without a refresh (with automatic reconnect and an HTTP
+  fallback).
+- **NFL auto-resolve** — post a prediction with an ESPN game link and Frager settles it
+  from the final score (a manual resolve always wins).
 
 ## Tech stack
 
@@ -34,6 +39,7 @@ deployed end to end.
 | Backend   | FastAPI (Python)                |
 | Database  | PostgreSQL                      |
 | Auth      | JWT (python-jose) + bcrypt      |
+| Real-time | WebSockets (FastAPI)            |
 | Hosting   | Vercel (frontend) · Render (API) · Neon (DB) |
 
 ## Architecture
@@ -41,8 +47,8 @@ deployed end to end.
 ```
 React (Vercel)  ──HTTP/JSON──▶  FastAPI (Render)  ──SQLAlchemy──▶  PostgreSQL (Neon)
    localStorage JWT              /api/... routers                    users, leagues,
-                                 bcrypt + JWT auth                    memberships,
-                                                                      predictions, picks
+        │  ▲                     /ws/leagues/{id}                    memberships,
+        └──┘  WebSocket events   bcrypt + JWT auth                   predictions, picks
 ```
 
 - **Auth:** passwords are bcrypt-hashed; access is via a signed JWT sent as a Bearer token.
@@ -51,6 +57,8 @@ React (Vercel)  ──HTTP/JSON──▶  FastAPI (Render)  ──SQLAlchemy─�
   so it can never drift out of sync.
 - **Anti-snipe:** the pick list is gated server-side — you can't see others' picks until you
   commit your own (or the prediction is resolved).
+- **Hardened:** auth endpoints are rate limited, passwords need 8+ characters, and every
+  response carries security headers.
 
 ## Project layout
 
@@ -58,22 +66,41 @@ React (Vercel)  ──HTTP/JSON──▶  FastAPI (Render)  ──SQLAlchemy─�
 frager/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py              FastAPI app, CORS, health
+│   │   ├── main.py              FastAPI app, CORS, security headers, /ws route
 │   │   ├── database.py          SQLAlchemy engine/session + Base
 │   │   ├── models.py            User, League, Membership, Prediction, Pick
 │   │   ├── schemas.py           Pydantic request/response models
 │   │   ├── security.py          hashing, JWT, get_current_user, get_db
 │   │   ├── membership.py        is_member / require_member helpers
+│   │   ├── rate_limit.py        slowapi limiter (auth endpoints)
+│   │   ├── ws.py                WebSocket connection manager (per league)
 │   │   ├── routes_auth.py       /api/auth/*
 │   │   ├── routes_leagues.py    /api/leagues/*
-│   │   └── routes_predictions.py /api/leagues/{id}/predictions, /api/predictions/*
+│   │   ├── routes_predictions.py /api/leagues/{id}/predictions, /api/predictions/*
+│   │   └── services/            ESPN client + auto-resolve helper
 │   ├── create_tables.py         create_all against DATABASE_URL
 │   ├── migrate_v4.py            ALTER predictions (resolution columns)
 │   ├── migrate_v7.py            ALTER users (nickname, backfill + unique index)
+│   ├── migrations/              migrate_v14_auto_resolve.py
+│   ├── tests/                   test_smoke_flows.py, test_m14_auto_resolve.py
+│   ├── render.yaml
 │   └── requirements.txt
 └── frontend/
-    └── src/App.jsx              auth, leagues, league view, picks, leaderboard
+    └── src/App.jsx              auth, leagues, league view, picks, leaderboard, WS client
 ```
+
+## Testing
+
+```bash
+cd backend
+python -m pytest tests          # 10 tests: smoke flows + auto-resolve
+```
+
+```bash
+cd frontend
+npm run build                   # production build
+```
+
 
 ## Running locally
 
@@ -89,6 +116,7 @@ source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env                 # set DATABASE_URL, SECRET_KEY, ACCESS_TOKEN_EXPIRE_MINUTES
 python create_tables.py              # create tables (and run migrate_v*.py on existing DBs)
+python migrations/migrate_v14_auto_resolve.py   # only for DBs created before M14
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -119,15 +147,19 @@ other users — only nicknames.
 | GET    | `/api/leagues`                           | —                        | 200 user's leagues | 401 |
 | GET    | `/api/leagues/{id}`                      | —                        | 200 league (members) | 404 |
 | POST   | `/api/leagues/join`                      | `{invite_code}`          | 200 league | 404 unknown code, 409 already a member |
-| POST   | `/api/leagues/{id}/predictions`          | `{question}`             | 201 prediction | 404 non-member |
+| POST   | `/api/leagues/{id}/predictions`          | `{question, game_url?}`  | 201 prediction | 404 non-member, 400 bad game link |
 | GET    | `/api/leagues/{id}/predictions`          | —                        | 200 list w/ counts + stakes | 404 non-member |
 | POST   | `/api/predictions/{id}/pick`             | `{side, stake}`          | 201 new / 200 updated | 404, 409 resolved, 422 bad side/stake |
 | GET    | `/api/predictions/{id}`                  | —                        | 200 detail (picks gated by `picks_visible`) | 404 |
 | POST   | `/api/predictions/{id}/resolve`          | `{outcome}`              | 200 resolved | 404, 403 non-creator, 409 already resolved |
 | GET    | `/api/leagues/{id}/leaderboard`          | —                        | 200 members ranked (points/record/accuracy) | 404 non-member |
+| WS     | `/ws/leagues/{id}?token=<jwt>`           | —                        | events: `prediction_created`, `pick_updated`, `prediction_resolved`, `leaderboard_updated` | closed if token invalid or not a member |
 
 ## Notes
 
+- **Rate limits:** `POST /api/auth/signup` allows 5/minute and `POST /api/auth/login`
+  10/minute per IP; exceeding either returns `429`.
+- **Passwords:** signup and login require 8–128 characters.
 - **Free-tier hosting:** the API sleeps after inactivity, so the first request can take
   ~30–60s to wake. The frontend shows a friendly "Waking up the server…" state and
   auto-retries, rather than failing.
