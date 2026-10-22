@@ -27,13 +27,15 @@ const members = [
 ]
 
 // Most specific first: "/api/leagues" is a prefix of every other league route.
+// The catch-all is GET-only, so an unmocked POST (a pick, a resolve, ...)
+// fails loudly instead of being answered with a league list.
 function leagueRoutes(extra = []) {
   return [
     { match: '/api/leagues/7/predictions', respond: () => jsonResponse([]) },
     { match: '/api/leagues/7/leaderboard', respond: () => jsonResponse(leaderboard) },
     { match: '/api/leagues/7/members', respond: () => jsonResponse(members) },
     ...extra,
-    { match: '/api/leagues', respond: () => jsonResponse([league]) },
+    { match: '/api/leagues', method: 'GET', respond: () => jsonResponse([league]) },
   ]
 }
 
@@ -167,6 +169,68 @@ describe('LeagueView transfer modal', () => {
     ).toBeInTheDocument()
     // the modal stays open so the user can pick someone else
     expect(screen.getByTestId('transfer-modal')).toBeInTheDocument()
+  })
+})
+
+describe('LeagueView void predictions', () => {
+  const voidPrediction = {
+    id: 11,
+    question: 'Will it rain tomorrow?',
+    status: 'void',
+    creator_id: null,
+    created_at: '2026-01-01T00:00:00Z',
+    yes_count: 2,
+    no_count: 1,
+    yes_stake: 10,
+    no_stake: 5,
+    resolved_outcome: null,
+  }
+
+  function voidRoutes() {
+    return [
+      {
+        match: '/api/leagues/7/predictions',
+        respond: () => jsonResponse([voidPrediction]),
+      },
+      {
+        match: '/api/predictions/11',
+        respond: () =>
+          jsonResponse({ ...voidPrediction, picks: [], picks_visible: true }),
+      },
+      { match: '/api/leagues/7/leaderboard', respond: () => jsonResponse(leaderboard) },
+      { match: '/api/leagues/7/members', respond: () => jsonResponse(members) },
+      { match: '/api/leagues', method: 'GET', respond: () => jsonResponse([league]) },
+    ]
+  }
+
+  it('marks a void prediction and offers no resolve buttons', async () => {
+    routeFetch(voidRoutes())
+    await renderLeagueView()
+
+    const item = await screen.findByTestId('prediction-item')
+    expect(item).toHaveTextContent('(void)')
+    expect(item.querySelector('.badge')).toHaveClass('badge-void')
+    expect(screen.getByTestId('void-banner')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Resolve Yes' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Resolve No' })).not.toBeInTheDocument()
+    // a void prediction is not open, so it cannot be picked on either
+    expect(screen.queryByRole('button', { name: 'Pick' })).not.toBeInTheDocument()
+  })
+
+  it('does not crash on a prediction whose creator deleted the account', async () => {
+    routeFetch(
+      voidRoutes().map((r) =>
+        r.match === '/api/leagues/7/predictions'
+          ? { ...r, respond: () => jsonResponse([{ ...voidPrediction, status: 'open' }]) }
+          : r,
+      ),
+    )
+    await renderLeagueView()
+
+    const item = await screen.findByTestId('prediction-item')
+    expect(item).toHaveTextContent('(open)')
+    // nobody owns it any more, so nobody may resolve it
+    expect(screen.queryByRole('button', { name: 'Resolve Yes' })).not.toBeInTheDocument()
   })
 })
 

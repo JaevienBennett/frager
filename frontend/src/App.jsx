@@ -70,6 +70,7 @@ export default function App() {
   const [nickname, setNickname] = useState('')
   const [mode, setMode] = useState('login')
   const [error, setError] = useState('')
+  const [view, setView] = useState('leagues')
 
   const logout = useCallback(async () => {
     const refreshToken = getRefreshToken()
@@ -129,6 +130,20 @@ export default function App() {
     } finally {
       setBooting(false)
     }
+  }, [])
+
+  const handlePasswordChanged = useCallback((data) => {
+    storeSession(data.access_token, data.refresh_token)
+    setToken(data.access_token)
+    setError('')
+  }, [])
+
+  const handleDeleted = useCallback(() => {
+    clearSession()
+    setToken(null)
+    setUser(null)
+    setView('leagues')
+    setError('')
   }, [])
 
   useEffect(() => {
@@ -192,6 +207,13 @@ export default function App() {
               <span className="header-user" data-testid="user-status">
                 Logged in as {user.nickname}
               </span>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => setView(view === 'account' ? 'leagues' : 'account')}
+                data-testid="account-button"
+              >
+                {view === 'account' ? 'Back' : 'Account'}
+              </button>
               <button className="btn btn-secondary btn-sm" onClick={logoutAll}>
                 Log out all
               </button>
@@ -212,7 +234,16 @@ export default function App() {
             </>
           ) : user ? (
             <section className="stack">
-              <Leagues token={token} userId={user.id} />
+              {view === 'account' ? (
+                <Account
+                  token={token}
+                  user={user}
+                  onPasswordChanged={handlePasswordChanged}
+                  onDeleted={handleDeleted}
+                />
+              ) : (
+                <Leagues token={token} userId={user.id} />
+              )}
             </section>
           ) : (
             <>
@@ -267,6 +298,220 @@ export default function App() {
         </div>
       </main>
     </div>
+  )
+}
+
+export function Account({ token, user, onPasswordChanged, onDeleted }) {
+  const [leagues, setLeagues] = useState([])
+  const [leaguesError, setLeaguesError] = useState('')
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [passwordError, setPasswordError] = useState('')
+  const [passwordDone, setPasswordDone] = useState('')
+  const [passwordBusy, setPasswordBusy] = useState(false)
+  const [deletePassword, setDeletePassword] = useState('')
+  const [deleteConfirm, setDeleteConfirm] = useState('')
+  const [deleteError, setDeleteError] = useState('')
+  const [deleteBusy, setDeleteBusy] = useState(false)
+
+  const auth = { Authorization: `Bearer ${token}` }
+
+  useEffect(() => {
+    let cancelled = false
+    fetchJson(`${API}/api/leagues`, { headers: auth })
+      .then((rows) => {
+        if (cancelled) return
+        setLeagues(rows)
+        setLeaguesError('')
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setLeagues([])
+        setLeaguesError(err.message)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [token])
+
+  const owned = leagues.filter((l) => l.owner_id === user.id)
+  const blocking = owned.filter((l) => l.member_count > 1)
+  const soleOwned = owned.filter((l) => l.member_count <= 1)
+
+  async function changePassword(e) {
+    e.preventDefault()
+    setPasswordError('')
+    setPasswordDone('')
+    if (newPassword !== confirmPassword) {
+      setPasswordError('The two new passwords are not the same.')
+      return
+    }
+    setPasswordBusy(true)
+    try {
+      const data = await fetchJson(`${API}/api/auth/change-password`, {
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          current_password: currentPassword,
+          new_password: newPassword,
+        }),
+      })
+      onPasswordChanged(data)
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      setPasswordDone('Password changed. Other devices have been signed out.')
+    } catch (err) {
+      setPasswordError(err.message)
+    } finally {
+      setPasswordBusy(false)
+    }
+  }
+
+  async function deleteAccount(e) {
+    e.preventDefault()
+    setDeleteError('')
+    if (deleteConfirm !== user.nickname) {
+      setDeleteError(`Type "${user.nickname}" to confirm.`)
+      return
+    }
+    setDeleteBusy(true)
+    try {
+      await fetchJson(`${API}/api/auth/delete-account`, {
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: deletePassword }),
+      })
+      onDeleted()
+    } catch (err) {
+      setDeleteError(err.message)
+      setDeleteBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="card form">
+        <h2 className="section-title">Change password</h2>
+        <p className="muted">
+          This signs you out everywhere else, including other devices.
+        </p>
+        <form onSubmit={changePassword}>
+          <input
+            className="input"
+            type="password"
+            placeholder="current password"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+            required
+            autoComplete="current-password"
+            data-testid="current-password"
+          />
+          <input
+            className="input"
+            type="password"
+            placeholder="new password (8+ chars)"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            required
+            minLength={8}
+            autoComplete="new-password"
+            data-testid="new-password"
+          />
+          <input
+            className="input"
+            type="password"
+            placeholder="repeat new password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            required
+            minLength={8}
+            autoComplete="new-password"
+            data-testid="confirm-password"
+          />
+          <button type="submit" className="btn btn-primary" disabled={passwordBusy}>
+            {passwordBusy ? 'Saving…' : 'Change password'}
+          </button>
+        </form>
+        {passwordError && (
+          <p className="error" data-testid="password-error">
+            {passwordError}
+          </p>
+        )}
+        {passwordDone && (
+          <p className="success" data-testid="password-done">
+            {passwordDone}
+          </p>
+        )}
+      </div>
+
+      <div className="card form danger-zone">
+        <h2 className="section-title">Delete account</h2>
+        <p className="muted">
+          Your open predictions are voided, your picks are removed, and every
+          league where you are the only member is deleted. Settled predictions
+          stay so other members keep their points.
+        </p>
+        {leaguesError && (
+          <p className="error" data-testid="delete-leagues-error">
+            {leaguesError}
+          </p>
+        )}
+        {blocking.length > 0 && (
+          <div className="blocked-leagues" data-testid="blocking-leagues">
+            <p className="error">
+              Transfer or leave these leagues first — they still have other
+              members:
+            </p>
+            <ul>
+              {blocking.map((l) => (
+                <li key={l.id}>{l.name}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {soleOwned.length > 0 && (
+          <p className="muted" data-testid="deleted-leagues">
+            These leagues will be deleted:{' '}
+            {soleOwned.map((l) => l.name).join(', ')}
+          </p>
+        )}
+        <form onSubmit={deleteAccount}>
+          <input
+            className="input"
+            type="password"
+            placeholder="password"
+            value={deletePassword}
+            onChange={(e) => setDeletePassword(e.target.value)}
+            required
+            autoComplete="current-password"
+            data-testid="delete-password"
+          />
+          <input
+            className="input"
+            placeholder={`type "${user.nickname}" to confirm`}
+            value={deleteConfirm}
+            onChange={(e) => setDeleteConfirm(e.target.value)}
+            required
+            data-testid="delete-confirm"
+          />
+          <button
+            type="submit"
+            className="btn btn-danger"
+            disabled={deleteBusy || blocking.length > 0}
+            data-testid="delete-account"
+          >
+            {deleteBusy ? 'Deleting…' : 'Delete my account'}
+          </button>
+        </form>
+        {deleteError && (
+          <p className="error" data-testid="delete-error">
+            {deleteError}
+          </p>
+        )}
+      </div>
+    </>
   )
 }
 
@@ -577,6 +822,7 @@ export function LeagueView({ token, userId, league, onBack, onUpdated, onDeleted
     setTransferOpen(true)
     setTransferTarget(null)
     setTransferError('')
+    setMembers([])
     setMembersLoading(true)
     try {
       const data = await fetchJson(`${API}/api/leagues/${league.id}/members`, {
@@ -584,6 +830,7 @@ export function LeagueView({ token, userId, league, onBack, onUpdated, onDeleted
       })
       setMembers(data)
     } catch (err) {
+      setMembers([])
       setTransferError(err.message)
     } finally {
       setMembersLoading(false)
@@ -1028,12 +1275,21 @@ export function LeagueView({ token, userId, league, onBack, onUpdated, onDeleted
                   </button>{' '}
                   <em
                     className={`badge ${
-                      p.status === 'resolved' ? 'badge-resolved' : 'badge-open'
+                      p.status === 'resolved'
+                        ? 'badge-resolved'
+                        : p.status === 'void'
+                          ? 'badge-void'
+                          : 'badge-open'
                     }`}
                   >
                     ({p.status})
                   </em>
                 </div>
+                {p.status === 'void' && (
+                  <div className="outcome-banner outcome-void" data-testid="void-banner">
+                    Void — the account that made this prediction was closed.
+                  </div>
+                )}
                 {p.status === 'resolved' && (
                   <div
                     data-testid="outcome-banner"

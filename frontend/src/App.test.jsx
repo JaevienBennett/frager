@@ -94,7 +94,7 @@ describe('App auth screen', () => {
         match: '/api/auth/me',
         respond: () => jsonResponse({ id: 1, nickname: 'alice' }),
       },
-      { match: '/api/leagues', respond: () => jsonResponse([]) },
+      { match: '/api/leagues', method: 'GET', respond: () => jsonResponse([]) },
     ])
     render(<App />)
 
