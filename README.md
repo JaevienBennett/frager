@@ -212,3 +212,34 @@ other users — only nicknames.
   ~30–60s to wake. The frontend shows a friendly "Waking up the server…" state and
   auto-retries, rather than failing.
 - **Deployment:** see [DEPLOY.md](DEPLOY.md) for the Neon + Render + Vercel setup.
+
+## Working with Claude
+
+Claude is set up here as a **read-only reviewer**, not an implementer. It shares this
+working tree with the implementing agent, so it must not be able to write, commit or push.
+
+**Claude Desktop (Code tab)** — the primary path:
+
+1. Open Claude → **Code** tab → `Cmd+N`.
+2. Environment **Local**, project folder `~/projects/frager`, **Worktree off** (this repo
+   forbids worktrees), permission mode **Plan**.
+3. Paste the prompt from [`REVIEW.md`](REVIEW.md).
+
+**Terminal CLI** — optional, faster, needs `claude auth login` once (your own account;
+nothing has to be enabled by an admin).
+
+- [`CLAUDE.md`](CLAUDE.md) — the project rules Claude reads automatically (emails never
+  leak, the leaderboard is derived, only the creator resolves, migrations need approval,
+  deploy backend-before-frontend, and the traps: no `asyncio.create_task` in sync
+  endpoints, never key a rate limit on `request.client.host`).
+- [`REVIEW.md`](REVIEW.md) — the review prompt to paste, and what to do with the answer.
+- [`.claude/settings.json`](.claude/settings.json) — project permissions: read-only
+  git/npm/pytest commands allowed; `.env` reads, `git push`, `git commit`, `git
+  checkout/switch/reset --hard/clean` and `rm -rf` denied. Deny rules apply even
+  before the folder is trusted, and the desktop app reads the same files as the CLI.
+- `~/.claude/settings.json` — the same `.env` and `git push` protection for every other
+  project on this machine.
+- `backend/.env` holds the production Neon `DATABASE_URL` (with a password). It is
+  never committed and Claude is denied access to it.
+
+
