@@ -601,10 +601,22 @@ function LeagueView({ token, userId, league, onBack, onUpdated, onDeleted, onLef
   const [actionError, setActionError] = useState('')
   const [actionBusy, setActionBusy] = useState(false)
   const [inviteCopied, setInviteCopied] = useState(false)
+  const [transferOpen, setTransferOpen] = useState(false)
+  const [members, setMembers] = useState([])
+  const [membersLoading, setMembersLoading] = useState(false)
+  const [transferTarget, setTransferTarget] = useState(null)
+  const [transferError, setTransferError] = useState('')
   const savedTimers = useRef({})
   const detailRequested = useRef({})
   const wsRef = useRef(null)
   const wsReconnectRef = useRef(null)
+  const leagueRef = useRef(league)
+  const onUpdatedRef = useRef(onUpdated)
+
+  useEffect(() => {
+    leagueRef.current = league
+    onUpdatedRef.current = onUpdated
+  })
 
   const auth = { Authorization: `Bearer ${token}` }
   const isOwner = league.owner_id === userId
@@ -690,6 +702,48 @@ function LeagueView({ token, userId, league, onBack, onUpdated, onDeleted, onLef
       setTimeout(() => setInviteCopied(false), 2000)
     } catch {
       setActionError('Could not copy the link — select it and copy manually.')
+    }
+  }
+
+  async function openTransfer() {
+    setTransferOpen(true)
+    setTransferTarget(null)
+    setTransferError('')
+    setMembersLoading(true)
+    try {
+      const data = await fetchJson(`${API}/api/leagues/${league.id}/members`, {
+        headers: auth,
+      })
+      setMembers(data)
+    } catch (err) {
+      setTransferError(err.message)
+    } finally {
+      setMembersLoading(false)
+    }
+  }
+
+  async function handleTransfer() {
+    if (!transferTarget) {
+      setTransferError('Pick the member who should take over.')
+      return
+    }
+    setTransferError('')
+    setActionBusy(true)
+    try {
+      const updated = await fetchJson(
+        `${API}/api/leagues/${league.id}/transfer`,
+        {
+          method: 'POST',
+          headers: { ...auth, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ new_owner_id: transferTarget }),
+        },
+      )
+      setTransferOpen(false)
+      onUpdated?.(updated)
+    } catch (err) {
+      setTransferError(err.message)
+    } finally {
+      setActionBusy(false)
     }
   }
 
@@ -797,6 +851,16 @@ function LeagueView({ token, userId, league, onBack, onUpdated, onDeleted, onLef
               return
             }
             if (msg.type === 'leaderboard_updated') {
+              loadLeaderboard()
+              return
+            }
+            if (msg.type === 'league_updated') {
+              if (typeof msg.owner_id === 'number') {
+                onUpdatedRef.current?.({
+                  ...leagueRef.current,
+                  owner_id: msg.owner_id,
+                })
+              }
               loadLeaderboard()
             }
           } catch {}
@@ -955,6 +1019,17 @@ function LeagueView({ token, userId, league, onBack, onUpdated, onDeleted, onLef
               data-testid="rename-league"
             >
               Rename
+            </button>
+          )}
+          {isOwner && (
+            <button
+              className="btn btn-secondary btn-sm"
+              type="button"
+              onClick={openTransfer}
+              disabled={actionBusy}
+              data-testid="transfer-league"
+            >
+              Transfer ownership
             </button>
           )}
           {isOwner && (
@@ -1269,7 +1344,14 @@ function LeagueView({ token, userId, league, onBack, onUpdated, onDeleted, onLef
                         className={e.user_id === userId ? 'me' : undefined}
                       >
                         <td className="rank">{medal ?? rank}</td>
-                        <td>{e.nickname}</td>
+                        <td>
+                          {e.nickname}
+                          {e.user_id === league.owner_id && (
+                            <span className="owner-tag" data-testid="owner-badge">
+                              Owner
+                            </span>
+                          )}
+                        </td>
                         <td className="num">{e.points}</td>
                         <td className="num">
                           {e.correct}/{e.total}
@@ -1285,6 +1367,76 @@ function LeagueView({ token, userId, league, onBack, onUpdated, onDeleted, onLef
             </div>
           </div>
         </>
+      )}
+
+      {transferOpen && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setTransferOpen(false)
+          }}
+        >
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Transfer ownership"
+            data-testid="transfer-modal"
+          >
+            <h4>Transfer ownership</h4>
+            <p className="hint">
+              The new owner can rename and delete the league. You stay a member
+              and can leave the league whenever you like.
+            </p>
+            {membersLoading ? (
+              <p className="muted">Loading members…</p>
+            ) : members.length <= 1 ? (
+              <p className="muted">
+                You are the only member — invite someone before handing the
+                league over.
+              </p>
+            ) : (
+              <ul className="modal-list">
+                {members.map((m) => (
+                  <li key={m.user_id}>
+                    <button
+                      type="button"
+                      className={`modal-option${
+                        transferTarget === m.user_id ? ' selected' : ''
+                      }`}
+                      onClick={() => setTransferTarget(m.user_id)}
+                      disabled={m.is_owner}
+                      data-testid={`transfer-option-${m.user_id}`}
+                    >
+                      <span>{m.nickname}</span>
+                      {m.is_owner && <span className="owner-tag">Owner</span>}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {transferError && <p className="error">{transferError}</p>}
+            <div className="row">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleTransfer}
+                disabled={actionBusy || !transferTarget}
+                data-testid="confirm-transfer"
+              >
+                Transfer ownership
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setTransferOpen(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {error && <p className="error">{error}</p>}

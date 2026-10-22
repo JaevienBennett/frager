@@ -799,6 +799,86 @@ h4.section-title {
 }
 
 /* ------------------------------------------------------------
+   Modal
+   ------------------------------------------------------------ */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.modal {
+  width: 100%;
+  max-width: 420px;
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: var(--space-4);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+}
+
+.modal h4 {
+  margin: 0 0 var(--space-2);
+}
+
+.modal-list {
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.modal-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 12px);
+  background: var(--bg);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.modal-option:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.modal-option.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.modal-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.owner-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  vertical-align: middle;
+}
+
+/* ------------------------------------------------------------
    Motion
    ------------------------------------------------------------ */
 
