@@ -1,5 +1,4 @@
 import asyncio
-import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -10,6 +9,7 @@ from slowapi.errors import RateLimitExceeded
 
 from . import database  # noqa: F401
 from . import ws as ws_module
+from .config import CORS_ORIGINS
 from .membership import is_member
 from .rate_limit import limiter
 from .routes_auth import router as auth_router
@@ -44,11 +44,7 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     return JSONResponse(status_code=429, content={"detail": "Too many requests. Try again later."})
 
 
-cors_origins = [
-    origin.strip()
-    for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
-    if origin.strip()
-]
+cors_origins = CORS_ORIGINS
 
 app.add_middleware(
     CORSMiddleware,
@@ -68,6 +64,10 @@ async def add_security_headers(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    if request.url.path.startswith("/api/auth"):
+        # A response that carries a session cookie must never be cached by a
+        # proxy, and neither must the answer to a sign in.
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 app.include_router(auth_router)

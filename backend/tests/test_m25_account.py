@@ -191,7 +191,7 @@ def test_change_password_changes_the_password_and_keeps_the_session(client):
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["access_token"] and body["refresh_token"]
+    assert body["access_token"]
 
     # the new password works, the old one does not
     assert (

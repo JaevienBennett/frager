@@ -1,13 +1,13 @@
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from . import rate_limit
 from . import ws
-from .config import REFRESH_TOKEN_EXPIRE_DAYS
+from .config import REFRESH_COOKIE_ONLY, REFRESH_TOKEN_EXPIRE_DAYS
 from .models import League, Membership, Prediction, RefreshToken, User
 from .schemas import (
     AccountDelete,
@@ -25,6 +25,14 @@ from .security import (
     hash_password,
     hash_refresh_token,
     verify_password,
+)
+from .session_cookie import (
+    clear_refresh_cookie,
+    csrf_token,
+    read_refresh_cookie,
+    require_allowed_origin,
+    require_csrf,
+    set_refresh_cookie,
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -48,8 +56,15 @@ def _new_refresh_token() -> str:
     return secrets.token_urlsafe(48)
 
 
-def _issue_session(db: Session, user: User) -> Token:
-    """Mint an access/refresh pair and persist the refresh token hash."""
+def _issue_session(
+    db: Session, user: User, request: Request, response: Response
+) -> Token:
+    """Mint an access/refresh pair and persist the refresh token hash.
+
+    The refresh token goes into an httpOnly cookie, so the browser keeps it
+    and no script can read it. The access token goes into the response body:
+    it is short lived and the client holds it in memory only.
+    """
     access_token = create_access_token(str(user.id), user.token_version)
     refresh_token = _new_refresh_token()
     db.add(
@@ -60,7 +75,12 @@ def _issue_session(db: Session, user: User) -> Token:
         )
     )
     db.commit()
-    return Token(access_token=access_token, refresh_token=refresh_token)
+    set_refresh_cookie(response, refresh_token, request)
+    return Token(
+        access_token=access_token,
+        refresh_token=None if REFRESH_COOKIE_ONLY else refresh_token,
+        csrf_token=csrf_token(user.id, user.token_version),
+    )
 
 
 def _revoke_active_refresh_tokens(
@@ -84,9 +104,11 @@ def _revoke_active_refresh_tokens(
 @rate_limit.limiter.limit("5/minute")
 def signup(
     request: Request,
+    response: Response,
     body: SignupRequest,
     db: Session = Depends(get_db),
 ):
+    require_allowed_origin(request)
     existing = db.query(User).filter(User.email == body.email).first()
     if existing is not None:
         rate_limit.note_failed_attempt(request, body.email, kind="signup")
@@ -109,12 +131,13 @@ def signup(
     db.add(user)
     db.commit()
     db.refresh(user)
-    return _issue_session(db, user)
+    return _issue_session(db, user, request, response)
 
 
 @router.post("/login", response_model=Token)
 def login(
     request: Request,
+    response: Response,
     body: Credentials,
     db: Session = Depends(get_db),
 ):
@@ -122,6 +145,7 @@ def login(
     # logins too, and ten logins a minute from a shared address would lock
     # that address out. The address and the account are limited by the number
     # of *failures* instead - see rate_limit.note_failed_attempt.
+    require_allowed_origin(request)
     user = db.query(User).filter(User.email == body.email).first()
     if user is None or not verify_password(body.password, user.password_hash):
         # Only failures are charged, so a correct password is never refused:
@@ -132,16 +156,35 @@ def login(
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return _issue_session(db, user)
+    return _issue_session(db, user, request, response)
 
 
 @router.post("/refresh", response_model=Token)
 @rate_limit.limiter.limit("60/minute")
-def refresh(request: Request, body: RefreshRequest, db: Session = Depends(get_db)):
-    """Rotate a refresh token. Presenting an already revoked token is theft."""
+def refresh(
+    request: Request,
+    response: Response,
+    body: RefreshRequest | None = None,
+    db: Session = Depends(get_db),
+):
+    """Rotate a refresh token. Presenting an already revoked token is theft.
+
+    The token comes from the httpOnly cookie. The body is only read while
+    clients are being moved over to the cookie, and never once
+    ``REFRESH_COOKIE_ONLY`` is on.
+    """
+    require_allowed_origin(request)
+    token = read_refresh_cookie(request)
+    if token is None and not REFRESH_COOKIE_ONLY and body is not None:
+        token = body.refresh_token
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+        )
     row = (
         db.query(RefreshToken)
-        .filter(RefreshToken.token_hash == hash_refresh_token(body.refresh_token))
+        .filter(RefreshToken.token_hash == hash_refresh_token(token))
         .first()
     )
     if row is None:
@@ -196,22 +239,54 @@ def refresh(request: Request, body: RefreshRequest, db: Session = Depends(get_db
     access_token = create_access_token(
         str(row.user_id), user.token_version if user is not None else 0
     )
-    return Token(access_token=access_token, refresh_token=new_refresh_token)
+    set_refresh_cookie(response, new_refresh_token, request)
+    return Token(
+        access_token=access_token,
+        refresh_token=None if REFRESH_COOKIE_ONLY else new_refresh_token,
+        csrf_token=csrf_token(
+            row.user_id, user.token_version if user is not None else 0
+        ),
+    )
 
 
 @router.post("/logout")
 @rate_limit.limiter.limit("30/minute")
-def logout(request: Request, body: RefreshRequest, db: Session = Depends(get_db)):
-    """Revoke a single refresh token. Unknown tokens are a no-op."""
-    row = (
-        db.query(RefreshToken)
-        .filter(RefreshToken.token_hash == hash_refresh_token(body.refresh_token))
-        .first()
-    )
-    if row is not None and row.revoked_at is None:
-        row.revoked_at = _now()
-        row.revoked_reason = "logout"
-        db.commit()
+def logout(
+    request: Request,
+    response: Response,
+    body: RefreshRequest | None = None,
+    db: Session = Depends(get_db),
+):
+    """Revoke the session the cookie points at and clear the cookie.
+
+    The cookie is the credential here, so a request that carries it has to
+    prove it came from the app: without the CSRF token another site could log
+    the visitor out.
+    """
+    require_allowed_origin(request)
+    token = read_refresh_cookie(request)
+    from_cookie = token is not None
+    if token is None and not REFRESH_COOKIE_ONLY and body is not None:
+        token = body.refresh_token
+    if token:
+        row = (
+            db.query(RefreshToken)
+            .filter(RefreshToken.token_hash == hash_refresh_token(token))
+            .first()
+        )
+        if row is not None and row.revoked_at is None:
+            if from_cookie:
+                user = db.get(User, row.user_id)
+                require_csrf(
+                    request,
+                    csrf_token(
+                        row.user_id, user.token_version if user is not None else 0
+                    ),
+                )
+            row.revoked_at = _now()
+            row.revoked_reason = "logout"
+            db.commit()
+    clear_refresh_cookie(response)
     return {"ok": True}
 
 
@@ -219,13 +294,20 @@ def logout(request: Request, body: RefreshRequest, db: Session = Depends(get_db)
 @rate_limit.limiter.limit("30/minute")
 def logout_all(
     request: Request,
+    response: Response,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Revoke every refresh token and invalidate every outstanding access token."""
+    require_allowed_origin(request)
+    if read_refresh_cookie(request) is not None:
+        # The browser will attach the cookie to this request, so the request
+        # has to prove it came from the app.
+        require_csrf(request, csrf_token(user.id, user.token_version))
     user.token_version += 1
     _revoke_active_refresh_tokens(db, user.id, _now(), "logout_all")
     db.commit()
+    clear_refresh_cookie(response)
     return {"ok": True}
 
 
@@ -239,6 +321,7 @@ def me(user: User = Depends(get_current_user)):
 @rate_limit.limiter.limit("20/hour", key_func=rate_limit.user_key)
 def change_password(
     request: Request,
+    response: Response,
     body: PasswordChange,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -248,6 +331,7 @@ def change_password(
     The old password is checked first, so the answer never says whether a
     password would be accepted without the current one being right.
     """
+    require_allowed_origin(request)
     if not verify_password(body.current_password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -266,7 +350,7 @@ def change_password(
     # The access token this session was opened with is dead now. Drop the
     # sockets that were opened with it so they stop receiving updates.
     ws.close_user_nowait(user.id)
-    return _issue_session(db, user)
+    return _issue_session(db, user, request, response)
 
 
 @router.post("/delete-account")
@@ -274,6 +358,7 @@ def change_password(
 @rate_limit.limiter.limit("20/hour", key_func=rate_limit.user_key)
 def delete_account(
     request: Request,
+    response: Response,
     body: AccountDelete,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -284,6 +369,7 @@ def delete_account(
     over or deleted first: deleting it here would take the other members'
     picks with it and rewrite their points.
     """
+    require_allowed_origin(request)
     # Lock the row so two requests at once cannot both pass the checks below.
     locked = (
         db.query(User).filter(User.id == user.id).with_for_update().first()
@@ -336,4 +422,5 @@ def delete_account(
     db.delete(locked)
     db.commit()
     ws.close_user_nowait(user_id)
+    clear_refresh_cookie(response)
     return {"ok": True}

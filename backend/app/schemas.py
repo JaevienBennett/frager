@@ -23,12 +23,16 @@ class SignupRequest(Credentials):
 
 class Token(BaseModel):
     access_token: str
-    refresh_token: str
+    # The refresh token travels in an httpOnly cookie. It is only in the body
+    # while clients are being moved over to the cookie.
+    refresh_token: str | None = None
+    # The value the client sends back in the X-CSRF-Token header.
+    csrf_token: str | None = None
     token_type: str = "bearer"
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: str | None = None
 
 
 class PasswordChange(BaseModel):

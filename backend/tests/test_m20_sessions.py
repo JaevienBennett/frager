@@ -20,6 +20,7 @@ from app.database import SessionLocal, engine
 from app.main import app
 from app.models import RefreshToken, User
 from app.security import create_access_token, hash_password, hash_refresh_token
+from app.session_cookie import REFRESH_COOKIE, csrf_token
 from migrations import migrate_v20_sessions
 
 SESSION_SCHEMA = "m20_sessions_test"
@@ -97,6 +98,27 @@ def _bearer(access_token: str) -> dict:
     return {"Authorization": f"Bearer {access_token}"}
 
 
+TEST_HOST = "testserver.local"
+
+
+def _hold(client, raw_token: str) -> None:
+    """Present a refresh token the way the browser does: as the cookie."""
+    client.cookies.clear()
+    client.cookies.set(
+        REFRESH_COOKIE, raw_token, domain=TEST_HOST, path="/api/auth"
+    )
+
+
+def _held(client) -> str | None:
+    """The refresh token the browser is currently holding."""
+    return client.cookies.get(REFRESH_COOKIE, domain=TEST_HOST, path="/api/auth")
+
+
+def _csrf(user) -> dict:
+    """The header a request that carries the cookie has to send."""
+    return {"X-CSRF-Token": csrf_token(user.id, user.token_version)}
+
+
 # --------------------------------------------------------------------------
 # token payload shape
 # --------------------------------------------------------------------------
@@ -117,11 +139,13 @@ def test_signup_returns_access_and_refresh_tokens(client, db_session):
     assert r.status_code in (200, 201), r.text
     body = r.json()
     assert body["access_token"]
-    assert body["refresh_token"]
     assert body["token_type"] == "bearer"
+    # the refresh token is kept in a cookie the browser cannot read
+    raw = _held(client)
+    assert raw
     # the refresh token is opaque, not a JWT
-    assert body["refresh_token"].count(".") == 0
-    assert len(body["refresh_token"]) >= 43
+    assert raw.count(".") == 0
+    assert len(raw) >= 43
 
     # track the row so it is removed again on a persistent database
     user = session.query(User).filter(User.email == email).one()
@@ -138,16 +162,17 @@ def test_login_returns_access_and_refresh_tokens(client, db_session):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["access_token"]
-    assert body["refresh_token"]
     assert body["token_type"] == "bearer"
+    raw = _held(client)
+    assert raw
 
     # only the hash is stored, never the raw token
     row = session.query(RefreshToken).filter(
-        RefreshToken.token_hash == hash_refresh_token(body["refresh_token"])
+        RefreshToken.token_hash == hash_refresh_token(raw)
     ).one()
     assert row.user_id == user.id
     assert row.revoked_at is None
-    assert body["refresh_token"] not in row.token_hash
+    assert raw not in row.token_hash
 
 
 # --------------------------------------------------------------------------
@@ -160,12 +185,14 @@ def test_refresh_rotates_the_pair_and_works_on_me(client, db_session):
     user = _make_user(session, created)
     raw = f"m20-raw-{uuid.uuid4().hex}"
     _insert_refresh_token(session, user.id, raw)
+    _hold(client, raw)
 
-    r = client.post("/api/auth/refresh", json={"refresh_token": raw})
+    r = client.post("/api/auth/refresh")
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["token_type"] == "bearer"
-    assert body["refresh_token"] != raw
+    rotated = _held(client)
+    assert rotated and rotated != raw
 
     # the new access token carries the current token version
     claims = jwt.get_unverified_claims(body["access_token"])
@@ -191,12 +218,15 @@ def test_replaying_a_just_rotated_token_does_not_nuke_sessions(client, db_sessio
     user = _make_user(session, created)
     raw = f"m20-raw-{uuid.uuid4().hex}"
     _insert_refresh_token(session, user.id, raw)
+    _hold(client, raw)
 
-    first = client.post("/api/auth/refresh", json={"refresh_token": raw})
+    first = client.post("/api/auth/refresh")
     assert first.status_code == 200, first.text
-    rotated = first.json()
+    rotated = _held(client)
 
-    second = client.post("/api/auth/refresh", json={"refresh_token": raw})
+    # the loser of the race still holds the token that was just spent
+    _hold(client, raw)
+    second = client.post("/api/auth/refresh")
     assert second.status_code == 401, second.text
     assert second.json()["detail"] == "Refresh token already rotated"
 
@@ -212,9 +242,8 @@ def test_replaying_a_just_rotated_token_does_not_nuke_sessions(client, db_sessio
     )
 
     # the winning tab's token still works
-    third = client.post(
-        "/api/auth/refresh", json={"refresh_token": rotated["refresh_token"]}
-    )
+    _hold(client, rotated)
+    third = client.post("/api/auth/refresh")
     assert third.status_code == 200, third.text
 
 
@@ -224,12 +253,13 @@ def test_reusing_a_revoked_refresh_token_revokes_everything(client, db_session):
     raw = f"m20-raw-{uuid.uuid4().hex}"
     _insert_refresh_token(session, user.id, raw)
     old_access = create_access_token(str(user.id), user.token_version)
+    _hold(client, raw)
 
-    first = client.post("/api/auth/refresh", json={"refresh_token": raw})
+    first = client.post("/api/auth/refresh")
     assert first.status_code == 200, first.text
-    rotated = first.json()
+    rotated = _held(client)
     assert (
-        client.get("/api/auth/me", headers=_bearer(rotated["access_token"])).status_code
+        client.get("/api/auth/me", headers=_bearer(first.json()["access_token"])).status_code
         == 200
     )
 
@@ -244,7 +274,8 @@ def test_reusing_a_revoked_refresh_token_revokes_everything(client, db_session):
     spent.revoked_at = datetime.now(timezone.utc) - timedelta(seconds=60)
     session.commit()
 
-    second = client.post("/api/auth/refresh", json={"refresh_token": raw})
+    _hold(client, raw)
+    second = client.post("/api/auth/refresh")
     assert second.status_code == 401, second.text
     assert second.json()["detail"] == "Refresh token reuse detected; all sessions revoked"
 
@@ -258,16 +289,18 @@ def test_reusing_a_revoked_refresh_token_revokes_everything(client, db_session):
     assert active == 0
 
     # the freshly issued refresh token is dead too
-    third = client.post("/api/auth/refresh", json={"refresh_token": rotated["refresh_token"]})
+    _hold(client, rotated)
+    third = client.post("/api/auth/refresh")
     assert third.status_code == 401, third.text
 
     # and both access tokens are now invalid
-    assert client.get("/api/auth/me", headers=_bearer(rotated["access_token"])).status_code == 401
+    assert client.get("/api/auth/me", headers=_bearer(first.json()["access_token"])).status_code == 401
     assert client.get("/api/auth/me", headers=_bearer(old_access)).status_code == 401
 
 
 def test_refresh_with_unknown_token_is_rejected(client):
-    r = client.post("/api/auth/refresh", json={"refresh_token": "not-a-real-token"})
+    _hold(client, "not-a-real-token")
+    r = client.post("/api/auth/refresh")
     assert r.status_code == 401, r.text
     assert r.json()["detail"] == "Invalid refresh token"
 
@@ -282,8 +315,9 @@ def test_expired_refresh_token_is_rejected_without_rotating(client, db_session):
         raw,
         expires_at=datetime.now(timezone.utc) - timedelta(seconds=5),
     )
+    _hold(client, raw)
 
-    r = client.post("/api/auth/refresh", json={"refresh_token": raw})
+    r = client.post("/api/auth/refresh")
     assert r.status_code == 401, r.text
     assert r.json()["detail"] == "Refresh token expired"
 
@@ -306,8 +340,9 @@ def test_logout_revokes_the_presented_refresh_token(client, db_session):
     user = _make_user(session, created)
     raw = f"m20-raw-{uuid.uuid4().hex}"
     _insert_refresh_token(session, user.id, raw)
+    _hold(client, raw)
 
-    r = client.post("/api/auth/logout", json={"refresh_token": raw})
+    r = client.post("/api/auth/logout", headers=_csrf(user))
     assert r.status_code == 200, r.text
     assert r.json() == {"ok": True}
 
@@ -318,8 +353,12 @@ def test_logout_revokes_the_presented_refresh_token(client, db_session):
     assert row.revoked_at is not None
     assert row.revoked_reason == "logout"
 
-    # it can no longer be used, but other sessions survive
-    r2 = client.post("/api/auth/refresh", json={"refresh_token": raw})
+    # the cookie is gone, so the browser has nothing left to present
+    assert _held(client) is None
+
+    # and the token itself can no longer be used, but other sessions survive
+    _hold(client, raw)
+    r2 = client.post("/api/auth/refresh")
     assert r2.status_code == 401, r2.text
     assert r2.json()["detail"] == "Refresh token has been revoked"
     session.expire_all()
@@ -327,7 +366,8 @@ def test_logout_revokes_the_presented_refresh_token(client, db_session):
 
 
 def test_logout_with_unknown_token_still_succeeds(client):
-    r = client.post("/api/auth/logout", json={"refresh_token": "never-existed"})
+    _hold(client, "never-existed")
+    r = client.post("/api/auth/logout")
     assert r.status_code == 200, r.text
     assert r.json() == {"ok": True}
 
@@ -338,26 +378,28 @@ def test_logout_all_invalidates_access_and_refresh_tokens(client, db_session):
     raw = f"m20-raw-{uuid.uuid4().hex}"
     _insert_refresh_token(session, user.id, raw)
     access = create_access_token(str(user.id), user.token_version)
+    _hold(client, raw)
 
     assert client.get("/api/auth/me", headers=_bearer(access)).status_code == 200
 
-    r = client.post("/api/auth/logout-all", headers=_bearer(access))
+    r = client.post("/api/auth/logout-all", headers={**_bearer(access), **_csrf(user)})
     assert r.status_code == 200, r.text
     assert r.json() == {"ok": True}
 
     session.expire_all()
     assert user.token_version == 1
     assert (
-        session.query(RefreshToken).filter(
-            RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None)
-        ).count()
+        session.query(RefreshToken)
+        .filter(RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None))
+        .count()
         == 0
     )
 
     # the old access token dies immediately
     assert client.get("/api/auth/me", headers=_bearer(access)).status_code == 401
     # and so does the refresh token, without bumping the version a second time
-    spent = client.post("/api/auth/refresh", json={"refresh_token": raw})
+    _hold(client, raw)
+    spent = client.post("/api/auth/refresh")
     assert spent.status_code == 401, spent.text
     assert spent.json()["detail"] == "Refresh token has been revoked"
     session.expire_all()
@@ -370,6 +412,7 @@ def test_logout_all_invalidates_access_and_refresh_tokens(client, db_session):
     assert login.status_code == 200, login.text
     new_access = login.json()["access_token"]
     assert client.get("/api/auth/me", headers=_bearer(new_access)).status_code == 200
+
 
 
 def test_logout_all_requires_authentication(client):

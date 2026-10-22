@@ -61,6 +61,22 @@ def db_session():
 
 
 @pytest.fixture(autouse=True)
+def _reset_client_cookies(request):
+    """Start every test without a session cookie.
+
+    The TestClient keeps a cookie jar, so the session one test opened would
+    still be attached to the next one - and the next test would be talking
+    about somebody else's session.
+    """
+    client = request.node.funcargs.get("client")
+    if client is not None:
+        client.cookies.clear()
+    yield
+    if client is not None:
+        client.cookies.clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_rate_limits():
     """Start every test with an empty rate limit bucket.
 
