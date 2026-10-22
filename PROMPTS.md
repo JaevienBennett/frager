@@ -4,6 +4,83 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
+## Milestone 26 — Session hardening: the refresh token leaves localStorage (DONE)
+
+```
+TITLE: Milestone 26 — Session hardening: the refresh token leaves localStorage
+
+CONTEXT
+The refresh token lives in localStorage. Any script that runs on the page - an XSS bug, a
+compromised dependency, a browser extension - can read it, and a refresh token that can
+be read is a session that can be stolen for a month (the refresh token lasts 30 days).
+The access token is in localStorage too, but it only lasts an hour, so the blast radius
+of the refresh token is the real problem. The token is also the one thing that has to
+survive a page reload, which is exactly why it ended up in localStorage.
+
+GOAL
+Move the refresh token into an httpOnly cookie the JavaScript cannot read, keep the
+access token in memory only, and defend the cookie-authenticated endpoints against
+cross-site requests.
+
+BACKEND
+1. A new module backend/app/session_cookie.py:
+   - set_refresh_cookie(response, token): the cookie is named frager_refresh, HttpOnly,
+     Path=/api/auth, Max-Age = REFRESH_TOKEN_EXPIRE_DAYS * 86400, and over https it is
+     Secure + SameSite=None (the frontend is on Vercel and the API on Render, so the
+     request is cross-site and SameSite=Lax would drop the cookie). Over plain http
+     (localhost, the test client) it is SameSite=Lax and not Secure.
+   - clear_refresh_cookie(response): the same attributes, Max-Age=0, so the browser drops it.
+   - csrf_token(user_id, token_version): HMAC-SHA256 over f"csrf:{user_id}:{token_version}"
+     keyed with SECRET_KEY, hex. It is stable across tabs and across refresh-token
+     rotations, and it dies when token_version moves (password change, log out all).
+   - require_csrf(request, expected): 403 "CSRF token missing or invalid" when the
+     X-CSRF-Token header does not match.
+   - require_allowed_origin(request): 403 "Origin not allowed" when the Origin header is
+     present and is not in CORS_ORIGINS. A request without an Origin header is allowed
+     (curl, the test client, server-to-server).
+2. signup, login, refresh, change-password set the cookie and return the token pair with
+   refresh_token omitted; refresh reads the cookie, not the body; logout revokes the
+   session the cookie points at and clears it; logout-all bumps token_version, revokes
+   every session and clears it; delete-account clears it.
+3. logout and logout-all require the CSRF token (sent as the X-CSRF-Token header) when the
+   request carries the cookie. refresh does NOT: the app has to be able to restore a
+   session after a reload, before it has a CSRF token.
+4. The origin check runs on every mutating auth endpoint.
+5. A transition flag REFRESH_COOKIE_ONLY (env, code default false) decides whether the
+   body refresh token is still handed out and accepted. It exists so the rollout can be
+   done in three steps: backend first (cookie + body token), frontend second, backend
+   third (body token gone).
+6. Every /api/auth response carries Cache-Control: no-store.
+
+FRONTEND
+7. frontend/src/lib/api.js: the access token, the CSRF token and "do we have a session"
+   live in module state - never in localStorage. Every request sends credentials:
+   'include' so the cookie travels, and the CSRF token as the X-CSRF-Token header.
+8. The app boots by calling POST /api/auth/refresh (no body) and asking the server
+   whether the cookie still holds a session. The old frager_token / frager_refresh keys
+   in localStorage are deleted on startup.
+9. logout and logout-all send no refresh token in the body any more.
+10. If another tab rotated the cookie first, the refresh that comes back as 401 "Refresh
+    token already rotated" is retried once after 500 ms.
+
+CONSTRAINTS (must follow)
+- The leaderboard is still derived from settled picks. Never store points.
+- No schema change, no migration.
+- Do not add a Vercel rewrite proxy: it would bypass Cloudflare and make the per-address
+  rate-limit bucket the shared Vercel edge IP.
+- The deployment has to be done in three steps (backend with the cookie, frontend, then
+  the backend with REFRESH_COOKIE_ONLY on) - never deploy the frontend before the backend
+  sets the cookie, or the app cannot restore a session.
+- Do not start long-running servers.
+- Shared checkout rules as specified (do not switch branches, do not commit, do not push)
+
+Report back: files changed/created, the exact commands to run the tests, the test counts
+before and after, and proof that the cookie is httpOnly, that a foreign Origin is refused,
+that a missing CSRF token is refused, and that nothing is left in localStorage.
+```
+
+---
+
 ## Milestone 25 — Account management + the M21–M24 review findings (DONE)
 
 ```

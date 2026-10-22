@@ -1,13 +1,20 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { jsonResponse, mockFetch } from '../test/helpers'
 import {
   API,
   NETWORK_ERROR,
+  clearSession,
   fetchJson,
   fetchJsonWithRetry,
-  getRefreshToken,
+  refreshSession,
+  storeSession,
 } from './api'
+
+beforeEach(() => {
+  // The session lives in module state, so every test starts signed out.
+  clearSession()
+})
 
 describe('fetchJson', () => {
   it('throws the backend detail message for a failed request', async () => {
@@ -57,14 +64,14 @@ describe('fetchJson', () => {
   })
 
   it('refreshes once and retries with the new access token', async () => {
-    localStorage.setItem('frager_refresh', 'old-refresh')
+    storeSession('old-access', 'old-csrf')
     const calls = []
     mockFetch(async (url, init) => {
       calls.push({ url, init })
       if (url.endsWith('/api/auth/refresh')) {
         return jsonResponse({
           access_token: 'new-access',
-          refresh_token: 'new-refresh',
+          csrf_token: 'new-csrf',
         })
       }
       const seen = calls.filter((c) => c.url === url).length
@@ -89,11 +96,11 @@ describe('fetchJson', () => {
     expect(calls.filter((c) => c.url.endsWith('/api/auth/refresh'))).toHaveLength(
       1,
     )
-    // and the rotated refresh token replaced the old one
-    expect(getRefreshToken()).toBe('new-refresh')
+    // and the rotated session is held in memory, not on disk
+    expect(localStorage.length).toBe(0)
   })
 
-  it('does not retry a 401 when there is no refresh token', async () => {
+  it('does not retry a 401 when there is no session', async () => {
     const calls = []
     mockFetch(async (url, init) => {
       calls.push({ url, init })
@@ -108,7 +115,7 @@ describe('fetchJson', () => {
 
   it('does not retry a 401 on an auth endpoint', async () => {
     const calls = []
-    localStorage.setItem('frager_refresh', 'old-refresh')
+    storeSession('old-access', 'old-csrf')
     mockFetch(async (url, init) => {
       calls.push({ url, init })
       return jsonResponse({ detail: 'Incorrect email or password' }, { status: 401 })
@@ -118,6 +125,85 @@ describe('fetchJson', () => {
       'Incorrect email or password',
     )
     expect(calls).toHaveLength(1)
+  })
+
+  it('sends the session cookie with every request', async () => {
+    const calls = []
+    mockFetch(async (url, init) => {
+      calls.push({ url, init })
+      return jsonResponse({ id: 1 })
+    })
+
+    await fetchJson(`${API}/api/leagues`)
+    expect(calls[0].init.credentials).toBe('include')
+  })
+
+  it('sends the CSRF token in a header', async () => {
+    const calls = []
+    storeSession('access-1', 'csrf-1')
+    mockFetch(async (url, init) => {
+      calls.push({ url, init })
+      return jsonResponse({ id: 1 })
+    })
+
+    await fetchJson(`${API}/api/leagues`)
+    expect(calls[0].init.headers['X-CSRF-Token']).toBe('csrf-1')
+  })
+
+  it('keeps no token in localStorage', async () => {
+    mockFetch(async () => jsonResponse({ access_token: 'a', csrf_token: 'c' }))
+    await refreshSession()
+    expect(localStorage.length).toBe(0)
+  })
+})
+
+describe('refreshSession', () => {
+  it('asks the server for a new access token and sends the cookie', async () => {
+    const calls = []
+    mockFetch(async (url, init) => {
+      calls.push({ url, init })
+      return jsonResponse({ access_token: 'access-2', csrf_token: 'csrf-2' })
+    })
+
+    const token = await refreshSession()
+    expect(token).toBe('access-2')
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url).toBe(`${API}/api/auth/refresh`)
+    expect(calls[0].init.method).toBe('POST')
+    expect(calls[0].init.credentials).toBe('include')
+    // the refresh token is in the cookie, never in the body
+    expect(calls[0].init.body).toBeUndefined()
+  })
+
+  it('ends the session when the cookie is gone', async () => {
+    const expired = vi.fn()
+    window.addEventListener('frager:auth-expired', expired)
+    mockFetch(async () =>
+      jsonResponse({ detail: 'Invalid refresh token' }, { status: 401 }),
+    )
+
+    await expect(refreshSession()).rejects.toThrow('Session expired')
+    expect(expired).toHaveBeenCalled()
+    window.removeEventListener('frager:auth-expired', expired)
+    clearSession()
+  })
+
+  it('tries once more when another tab rotated the cookie first', async () => {
+    let n = 0
+    mockFetch(async () => {
+      n += 1
+      if (n === 1) {
+        return jsonResponse(
+          { detail: 'Refresh token already rotated' },
+          { status: 401 },
+        )
+      }
+      return jsonResponse({ access_token: 'access-2', csrf_token: 'csrf-2' })
+    })
+
+    const token = await refreshSession()
+    expect(token).toBe('access-2')
+    expect(n).toBe(2)
   })
 })
 

@@ -107,7 +107,7 @@ describe('Account change password', () => {
             posts.push({ url, body: JSON.parse(init.body) })
             return jsonResponse({
               access_token: 'access-2',
-              refresh_token: 'refresh-2',
+              csrf_token: 'csrf-2',
             })
           },
         },
@@ -128,7 +128,7 @@ describe('Account change password', () => {
     })
     expect(onPasswordChanged).toHaveBeenCalledWith({
       access_token: 'access-2',
-      refresh_token: 'refresh-2',
+      csrf_token: 'csrf-2',
     })
     expect(await screen.findByTestId('password-done')).toBeInTheDocument()
   })
@@ -273,9 +273,13 @@ describe('Account delete account', () => {
 
 describe('App account view', () => {
   it('signs the user out after the account is deleted', async () => {
-    localStorage.setItem('frager_token', 'access-1')
-    localStorage.setItem('frager_refresh', 'refresh-1')
     routeFetch([
+      {
+        match: '/api/auth/refresh',
+        method: 'POST',
+        respond: () =>
+          jsonResponse({ access_token: 'access-1', csrf_token: 'csrf-1' }),
+      },
       {
         match: '/api/auth/me',
         respond: () => jsonResponse({ id: USER.id, nickname: USER.nickname }),
@@ -301,5 +305,6 @@ describe('App account view', () => {
     )
     expect(localStorage.getItem('frager_token')).toBeNull()
     expect(localStorage.getItem('frager_refresh')).toBeNull()
+    expect(localStorage.length).toBe(0)
   })
 })

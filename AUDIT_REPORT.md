@@ -61,11 +61,18 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 
 ## 7) Auth
 - **Tokens:** JWT (python-jose), bcrypt via passlib (pinned 4.0.1). **OK**.
-- **Session:** localStorage token, /me on load. **OK**.
+- **Session:** localStorage token, /me on load. **OK**. — **FIXED (M26):** the refresh
+  token is in an `httpOnly` cookie (`frager_refresh`, `Path=/api/auth`, `SameSite=None;
+  Secure` over https), the access token is in memory only, and the app restores the
+  session after a reload with `POST /api/auth/refresh` (no body).
 - **Logout:** Clears token. **OK**.
 - **Password requirements:** No explicit complexity beyond non-empty (schema just requires password). **LOW** - consider minimum length. — **FIXED (M17):** `Credentials.password` is `Field(min_length=8, max_length=128)`; frontend enforces `minLength={8}`.
 - **Token expiry:** Configurable `ACCESS_TOKEN_EXPIRE_MINUTES`. — **IMPROVED (M20):** rotating opaque refresh tokens with per-user token versioning, logout-all invalidation, and theft detection.
-- **Evidence:** `app/security.py`, `app/routes_auth.py`, `app/config.py`.
+- **CSRF:** the cookie-authenticated endpoints (`logout`, `logout-all`) need a CSRF token
+  in the `X-CSRF-Token` header, and every mutating auth endpoint refuses a request whose
+  `Origin` is not in `CORS_ORIGINS`. — **ADDED (M26).**
+- **Evidence:** `app/security.py`, `app/routes_auth.py`, `app/config.py`,
+  `app/session_cookie.py`.
 
 ## 8) Predictions
 - **Creation:** Works with/without game link (M14). **OK**.
@@ -125,12 +132,20 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
   `npm audit` still reports 5 dev-only advisories (esbuild/vite dev server, vite-node,
   tinypool); they are unreachable in the deployed app and fixing them needs a breaking
   Vitest 5 / Vite 8 upgrade.
-- No password-change endpoint and no account-deletion endpoint.
-- Refresh tokens still live in `localStorage` (an httpOnly cookie would be safer against XSS).
+- ~~No password-change endpoint and no account-deletion endpoint.~~ **Fixed in M25**:
+  `POST /api/auth/change-password` and `POST /api/auth/delete-account` (the user's open
+  predictions are voided, their picks removed, and the leagues they are the last member of
+  are deleted).
+- ~~Refresh tokens still live in `localStorage`.~~ **Fixed in M26**: the refresh token
+  travels in an `httpOnly` cookie, the access token lives in memory only, and the old
+  `localStorage` keys are deleted on startup. The cookie is cross-site
+  (`SameSite=None; Secure`), so the endpoints that use it check the `Origin` header and
+  require a CSRF token.
 - Rate limit counters live in process memory, so a multi-instance deployment would count
   per instance (Render currently runs one).
 - `users.id` → `leagues.owner_id` is `ON DELETE CASCADE`: deleting a user would delete the
-  leagues they own. There is no account-deletion endpoint yet, so this is latent.
+  leagues they own. **M25**: `delete-account` refuses with 409 while the user still owns a
+  league with other members — the league has to be transferred or deleted first.
 
 ## Implemented Fixes
 
@@ -322,11 +337,63 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 - `frontend/src/Account.test.jsx` (9 tests) and two new cases in
   `frontend/src/LeagueView.test.jsx` (void badge, prediction without a creator).
 
+### M26 — Session hardening: the refresh token leaves localStorage
+**The problem.** The refresh token was in `localStorage`. Any script that runs on the page
+— an XSS bug, a compromised dependency, a browser extension — could read it, and a
+refresh token that can be read is a session that can be stolen for a month. It was in
+`localStorage` because it has to survive a page reload.
+
+**New module**
+- `backend/app/session_cookie.py`:
+  - `set_refresh_cookie(response, token)` / `clear_refresh_cookie(response)` — the cookie
+    is `frager_refresh`, `HttpOnly`, `Path=/api/auth`, `Max-Age` = the refresh lifetime.
+    Over https it is `Secure` + `SameSite=None` (the frontend is on Vercel and the API on
+    Render, so the request is cross-site and `SameSite=Lax` would drop the cookie); over
+    plain http (localhost, the test client) it is `SameSite=Lax` and not `Secure`.
+  - `csrf_token(user_id, token_version)` — `HMAC-SHA256(SECRET_KEY, f"csrf:{user_id}:{token_version}")`,
+    hex. Stable across tabs and across refresh-token rotations; dies when
+    `token_version` moves (password change, log out all).
+  - `require_csrf(request, expected)` — 403 `CSRF token missing or invalid`.
+  - `require_allowed_origin(request)` — 403 `Origin not allowed` when the `Origin` header
+    is present and is not in `CORS_ORIGINS`. A request without an `Origin` header is
+    allowed (curl, the test client).
+- `backend/app/config.py`: `CORS_ORIGINS` (moved out of `main.py`, same parsing — the
+  CORS middleware and the origin check now read the same list) and `REFRESH_COOKIE_ONLY`
+  (the rollout switch).
+- `backend/app/routes_auth.py`: signup, login, refresh and change-password set the cookie
+  and return `{access_token, csrf_token}`; refresh reads the cookie instead of the body;
+  logout revokes the session the cookie points at and clears it; logout-all bumps
+  `token_version`, revokes every session and clears it; delete-account clears it. The
+  origin check runs on every mutating auth endpoint, and `logout`/`logout-all` require
+  the CSRF token **when the cookie travels**. `refresh` stays CSRF-exempt: the app has to
+  be able to restore a session after a reload, before it has a CSRF token.
+- `backend/app/main.py`: every `/api/auth` response carries `Cache-Control: no-store`.
+- `frontend/src/lib/api.js`: the access token, the CSRF token and "do we have a session"
+  live in module state — never in `localStorage`. Every request sends
+  `credentials: 'include'` so the cookie travels, and the CSRF token as the
+  `X-CSRF-Token` header. The app boots with `POST /api/auth/refresh` (no body) and asks
+  the server whether the cookie still holds a session; the old `frager_token` /
+  `frager_refresh` keys are deleted on startup. A refresh that comes back as 401
+  `Refresh token already rotated` (another tab rotated the cookie first) is retried once
+  after 500 ms.
+- `frontend/src/App.jsx`: `logout` and `logout-all` send no refresh token in the body any
+  more; the boot effect restores the session from the cookie.
+
+**The rollout** is three phases, because the two sides have to agree on the transition:
+(a) the backend sets the cookie and still accepts the body token, (b) the frontend moves
+over, (c) `REFRESH_COOKIE_ONLY` is turned on and the body token is gone. See `DEPLOY.md`.
+
 ### Verification
 - `python3 -m pytest tests -q` (from `backend/`, against a scratch PostgreSQL 16 instance)
-  → **123 passed** (92 after M24 + 4 M21 races + 19 M25 account + 3 M25 migration +
-  2 M22 + 3 M23). Neon was not touched.
-- `npm test` (in `frontend/`) → **46 passed** (5 files, ~1.5s, no warnings).
+  → **144 passed** (123 after M25 + 19 M26 session cookie + 2 M26 pool pre-ping). Neon
+  was not touched.
+- `npm test` (in `frontend/`) → **53 passed** (5 files, ~1.5s, no warnings).
+- Mutation check on the new M26 guards — every one of them is caught by a test:
+  dropping `httponly` → the cookie test fails; dropping the origin check → 4 failures;
+  dropping the CSRF check on logout → 2 failures; dropping it on logout-all → 1 failure;
+  `SameSite=None` → `lax` → the https cookie test fails; `Secure` → `False` → the same
+  test fails; dropping `credentials: 'include'` in the frontend → the api test fails;
+  dropping the `X-CSRF-Token` header → the api test fails.
 - Mutation check on the new frontend tests: breaking the owner-badge condition fails 2
   tests; posting the wrong owner id fails the transfer test with
   "expected { new_owner_id: +0 } to deeply equal { new_owner_id: 2 }". The tests are not
@@ -342,6 +409,27 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
     non-owner refused (403) → former owner leaves (200) → new owner cannot leave (409) →
     new owner deletes the league (200). 12/12 checks passed.
   - The throwaway probe accounts were deleted from Neon afterwards (5 rows, 0 left).
+- Production check after the M26 phase (a) deploy (backend `5eef0d1` + `cf168cc`),
+  with a throwaway probe account that was deleted afterwards — **17/17 checks passed**:
+  - The deployed API answers a signup with
+    `Set-Cookie: frager_refresh=…; HttpOnly; Max-Age=2592000; Path=/api/auth; SameSite=none; Secure`
+    and `Cache-Control: no-store` ✓ — the refresh token is now in a cookie that no
+    script can read.
+  - The body still carries the refresh token and a `csrf_token` (the transition gate is
+    off, so an old frontend keeps working) ✓.
+  - A refresh with **only** the cookie → `200` with a new access token and a new CSRF
+    token ✓.
+  - A request from a foreign `Origin` → `403 Origin not allowed` ✓.
+  - A logout without the CSRF token → `403 CSRF token missing or invalid`; with it →
+    `200 {"ok": true}`; the session is then dead (`401` on refresh) ✓.
+  - **The probe found a second bug.** The first request after a quiet period answered
+    `500` — the pool handed out a connection that Neon (or the proxy in front of it) had
+    closed while it sat idle. Fixed in `cf168cc`: `pool_pre_ping=True` (the pool checks
+    a connection before it hands it out) and `pool_recycle=300`. Two new tests, and both
+    fail without `pool_pre_ping`.
+  - The CORS preflight for `Origin: https://frager-ten.vercel.app` answers
+    `access-control-allow-origin: https://frager-ten.vercel.app` with
+    `access-control-allow-credentials: true` ✓ — the browser will send the cookie.
 - Production check after the M25 deploy (migration `migrate_v25_creator_set_null` on
   Neon → 2 changes, then 0 on a repeat run; backend `f51589b` + `3316bfc`; frontend
   `c6ddd48`), with throwaway probe accounts that were deleted afterwards:

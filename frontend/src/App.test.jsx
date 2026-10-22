@@ -35,6 +35,11 @@ describe('App auth screen', () => {
   it('shows the backend error when a signup is rejected', async () => {
     routeFetch([
       {
+        match: '/api/auth/refresh',
+        method: 'POST',
+        respond: () => jsonResponse({ detail: 'Invalid refresh token' }, { status: 401 }),
+      },
+      {
         match: '/api/auth/signup',
         method: 'POST',
         respond: () =>
@@ -43,6 +48,8 @@ describe('App auth screen', () => {
     ])
     render(<App />)
 
+    // the app asks the server whether the cookie holds a session first
+    await screen.findByRole('button', { name: 'Need an account? Sign up' })
     await click(screen.getByRole('button', { name: 'Need an account? Sign up' }))
     await fillAuthForm({
       email: 'taken@example.com',
@@ -60,6 +67,11 @@ describe('App auth screen', () => {
   it('shows the backend error when a login is rejected', async () => {
     routeFetch([
       {
+        match: '/api/auth/refresh',
+        method: 'POST',
+        respond: () => jsonResponse({ detail: 'Invalid refresh token' }, { status: 401 }),
+      },
+      {
         match: '/api/auth/login',
         method: 'POST',
         respond: () =>
@@ -71,6 +83,7 @@ describe('App auth screen', () => {
     ])
     render(<App />)
 
+    await screen.findByPlaceholderText('email')
     await fillAuthForm({
       email: 'alice@example.com',
       password: 'wrongpassword',
@@ -82,13 +95,18 @@ describe('App auth screen', () => {
     )
   })
 
-  it('stores the session and opens the leagues screen after a signup', async () => {
+  it('keeps the session out of localStorage after a signup', async () => {
     routeFetch([
+      {
+        match: '/api/auth/refresh',
+        method: 'POST',
+        respond: () => jsonResponse({ detail: 'Invalid refresh token' }, { status: 401 }),
+      },
       {
         match: '/api/auth/signup',
         method: 'POST',
         respond: () =>
-          jsonResponse({ access_token: 'access-1', refresh_token: 'refresh-1' }),
+          jsonResponse({ access_token: 'access-1', csrf_token: 'csrf-1' }),
       },
       {
         match: '/api/auth/me',
@@ -98,6 +116,8 @@ describe('App auth screen', () => {
     ])
     render(<App />)
 
+    // the app asks the server whether the cookie holds a session first
+    await screen.findByRole('button', { name: 'Need an account? Sign up' })
     await click(screen.getByRole('button', { name: 'Need an account? Sign up' }))
     await fillAuthForm({
       email: 'alice@example.com',
@@ -109,7 +129,36 @@ describe('App auth screen', () => {
     expect(await screen.findByTestId('user-status')).toHaveTextContent(
       'Logged in as alice',
     )
-    expect(localStorage.getItem('frager_token')).toBe('access-1')
-    expect(localStorage.getItem('frager_refresh')).toBe('refresh-1')
+    // nothing a script could steal is left on disk
+    expect(localStorage.length).toBe(0)
+  })
+
+  it('restores the session from the cookie on load', async () => {
+    const calls = []
+    routeFetch([
+      {
+        match: '/api/auth/refresh',
+        method: 'POST',
+        respond: (url, init) => {
+          calls.push({ url, init })
+          return jsonResponse({ access_token: 'access-1', csrf_token: 'csrf-1' })
+        },
+      },
+      {
+        match: '/api/auth/me',
+        respond: () => jsonResponse({ id: 1, nickname: 'alice' }),
+      },
+      { match: '/api/leagues', method: 'GET', respond: () => jsonResponse([]) },
+    ])
+    render(<App />)
+
+    expect(await screen.findByTestId('user-status')).toHaveTextContent(
+      'Logged in as alice',
+    )
+    // the cookie has to be sent, or the server cannot find the session
+    expect(calls[0].init.credentials).toBe('include')
+    // and the old token in localStorage is thrown away
+    expect(localStorage.getItem('frager_token')).toBeNull()
+    expect(localStorage.getItem('frager_refresh')).toBeNull()
   })
 })

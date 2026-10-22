@@ -33,6 +33,13 @@ This file is the short version: the rules that are easy to break by accident.
 - **Do not `git checkout` / `switch` / `branch` / `worktree` / `commit` / `push`** unless
   explicitly asked. This checkout is shared with another agent working in the same tree.
 - **Do not start long-running servers.**
+- **Nothing that signs a user in may live in `localStorage`.** The refresh token is in an
+  `httpOnly` cookie (`frager_refresh`, `Path=/api/auth`, `SameSite=None; Secure` over
+  https), the access token and the CSRF token are in module state in
+  `frontend/src/lib/api.js`. `logout` and `logout-all` need the `X-CSRF-Token` header
+  when the cookie travels; `refresh` must stay CSRF-exempt (the app restores the session
+  after a reload). The origin check uses the same `CORS_ORIGINS` list as the CORS
+  middleware — one wrong entry there and every login is a 403.
 
 ## Traps specific to this codebase
 
@@ -62,6 +69,10 @@ This file is the short version: the rules that are easy to break by accident.
   HTTP/session helpers live in `frontend/src/lib/api.js` and the pure helpers in
   `frontend/src/lib/format.js`. Move code out only when it must move, and move it
   verbatim.
+- **The session cookie is cross-site** (Vercel → Render), so it must be `SameSite=None`
+  and `Secure` in production; `SameSite=Lax` over plain http (localhost, the test
+  client). Every frontend request needs `credentials: 'include'` or the cookie never
+  travels.
 - **The frontend bundle is content-hashed**; the same source produces the same filename.
   A changed hash after a refactor means behaviour changed. Compare against the previous
   build to prove a refactor was a no-op.
@@ -69,10 +80,10 @@ This file is the short version: the rules that are easy to break by accident.
 ## Commands
 
 ```bash
-# backend tests (123) - needs a scratch PostgreSQL, never production
+# backend tests (142) - needs a scratch PostgreSQL, never production
 cd backend && DATABASE_URL='postgresql+psycopg2://postgres@localhost:55432/frager' python3 -m pytest tests -q
 
-# frontend tests (46) and build
+# frontend tests (53) and build
 cd frontend && npm test
 cd frontend && npm run build
 
@@ -93,6 +104,7 @@ cd backend && python3 -c "import app.main"
 | `backend/app/models.py` | `User`, `League`, `Membership`, `Prediction`, `Pick`, `RefreshToken` |
 | `backend/app/schemas.py` | request/response models and their validation |
 | `backend/app/membership.py` | `is_member()` |
+| `backend/app/session_cookie.py` | the refresh cookie, the CSRF token, the origin check |
 | `backend/tests/` | pytest suites (`conftest.py` seeds the DB and resets the limiter) |
 | `frontend/src/App.jsx` | the whole UI: `App`, `Leagues`, `LeagueView` |
 | `frontend/src/lib/` | `api.js` (fetch/session), `format.js` (pure helpers) |

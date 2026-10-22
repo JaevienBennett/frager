@@ -3,12 +3,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   API,
   NETWORK_ERROR,
-  TOKEN_KEY,
   WAKING_UP,
   clearSession,
   fetchJson,
   fetchJsonWithRetry,
-  getRefreshToken,
+  purgeLegacyTokens,
   refreshSession,
   storeSession,
 } from './lib/api'
@@ -60,11 +59,9 @@ function Brand({ hero = false }) {
 }
 
 export default function App() {
-  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY))
+  const [token, setToken] = useState(null)
   const [user, setUser] = useState(null)
-  const [booting, setBooting] = useState(
-    () => !!(localStorage.getItem(TOKEN_KEY) || getRefreshToken()),
-  )
+  const [booting, setBooting] = useState(true)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [nickname, setNickname] = useState('')
@@ -73,20 +70,16 @@ export default function App() {
   const [view, setView] = useState('leagues')
 
   const logout = useCallback(async () => {
-    const refreshToken = getRefreshToken()
+    try {
+      await fetchJson(`${API}/api/auth/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+    } catch {}
     clearSession()
     setToken(null)
     setUser(null)
     setError('')
-    if (refreshToken) {
-      try {
-        await fetchJson(`${API}/api/auth/logout`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refresh_token: refreshToken }),
-        })
-      } catch {}
-    }
   }, [])
 
   async function logoutAll() {
@@ -133,7 +126,7 @@ export default function App() {
   }, [])
 
   const handlePasswordChanged = useCallback((data) => {
-    storeSession(data.access_token, data.refresh_token)
+    storeSession(data.access_token, data.csrf_token)
     setToken(data.access_token)
     setError('')
   }, [])
@@ -164,17 +157,20 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    // The session lives in a cookie the app cannot read, so the only way to
+    // find out whether we are signed in is to ask the server. The answer
+    // comes back as a fresh access token.
+    purgeLegacyTokens()
+    refreshSession()
+      .then((tok) => setToken(tok))
+      .catch((err) => {
+        if (err.message === NETWORK_ERROR) setError(err.message)
+        setBooting(false)
+      })
+  }, [])
+
+  useEffect(() => {
     if (token) loadMe(token)
-    else if (getRefreshToken()) {
-      refreshSession()
-        .then((tok) => setToken(tok))
-        .catch((err) => {
-          if (err.message === NETWORK_ERROR) setError(err.message)
-          setBooting(false)
-        })
-    } else {
-      setBooting(false)
-    }
   }, [token, loadMe])
 
   async function submit(e) {
@@ -188,7 +184,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      storeSession(data.access_token, data.refresh_token)
+      storeSession(data.access_token, data.csrf_token)
       setPassword('')
       setNickname('')
       setToken(data.access_token)

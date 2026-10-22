@@ -105,6 +105,50 @@ That endpoint only exists from M21 onwards, so **deploy the backend before the
 frontend**. If the frontend goes first, the transfer dialog reports "Not found" until the
 backend is updated; everything else keeps working.
 
+## 5b. The session cookie (M26) — three phases, in this order
+
+From M26 the refresh token lives in an `httpOnly` cookie instead of `localStorage`, and
+the frontend keeps the access token in memory only. The rollout has to happen in three
+steps, because the two sides have to agree on the transition:
+
+| Phase | What goes out | What it means |
+|-------|---------------|---------------|
+| (a)   | backend       | the API sets the cookie **and** still hands out / accepts the body refresh token |
+| (b)   | frontend      | the app stops using `localStorage` and starts using the cookie |
+| (c)   | backend       | `REFRESH_COOKIE_ONLY` is turned on: the body refresh token is no longer returned or accepted |
+
+Never deploy (b) before (a): without the cookie the app cannot restore a session after a
+reload. Never deploy (c) before (b): an old frontend still sends the body token and
+would be signed out on every reload.
+
+Phase (c) is the env flag `REFRESH_COOKIE_ONLY=true` on Render (the code default is
+`false` so the backend can be deployed before the frontend).
+
+**Check the origin before phase (a).** The cookie is cross-site (Vercel → Render), so it
+is `SameSite=None; Secure`, and the backend refuses a mutating auth request whose
+`Origin` is not the frontend's. `CORS_ORIGINS` on Render must contain
+`https://frager-ten.vercel.app` exactly — one wrong character and every login is
+refused with `403 Origin not allowed`. Check it before deploying:
+
+```bash
+curl -i -X OPTIONS https://frager-backend.onrender.com/api/auth/login \
+  -H 'Origin: https://frager-ten.vercel.app' \
+  -H 'Access-Control-Request-Method: POST' | grep -i 'access-control-allow-origin'
+```
+
+After phase (a) the API must answer with the cookie:
+
+```bash
+curl -i -X POST https://frager-backend.onrender.com/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"...","password":"..."}' | grep -i set-cookie
+# frager_refresh=...; HttpOnly; Secure; SameSite=None; Path=/api/auth; Max-Age=2592000
+```
+
+After phase (b) the deployed bundle must send the cookie and keep no token in
+`localStorage` (check the bundle in `frontend/dist/assets/index-*.js` for
+`credentials:"include"` and for the absence of `frager_refresh`).
+
 ## 6. Rate limiting and proxies in production
 
 The API sits behind Cloudflare → Render → uvicorn.

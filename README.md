@@ -18,7 +18,8 @@ deployed end to end.
 
 - **Accounts** — sign up with an email, a public nickname, and a password.
 - **Sessions** — short-lived access tokens with rotating refresh tokens; the app renews
-  them silently, and "Log out all" revokes every device immediately.
+  them silently, and "Log out all" revokes every device immediately. The refresh token
+  lives in an `httpOnly` cookie, so a script on the page cannot read it.
 - **Leagues** — create a private league and invite friends with a shareable link or a short
   invite code.
 - **Manage** — owners can rename or delete a league; members can leave. Deleting a league
@@ -45,7 +46,7 @@ deployed end to end.
 | Frontend  | React (Vite)                    |
 | Backend   | FastAPI (Python)                |
 | Database  | PostgreSQL                      |
-| Auth      | JWT (python-jose) + bcrypt + rotating refresh tokens |
+| Auth      | JWT (python-jose) + bcrypt + rotating refresh tokens (httpOnly cookie) |
 | Real-time | WebSockets (FastAPI)            |
 | Hosting   | Vercel (frontend) · Render (API) · Neon (DB) |
 
@@ -53,12 +54,16 @@ deployed end to end.
 
 ```
 React (Vercel)  ──HTTP/JSON──▶  FastAPI (Render)  ──SQLAlchemy──▶  PostgreSQL (Neon)
-   localStorage JWT              /api/... routers                    users, leagues,
-        │  ▲                     /ws/leagues/{id}                    memberships,
-        └──┘  WebSocket events   bcrypt + JWT auth                   predictions, picks
+ in-memory JWT +                 /api/... routers                    users, leagues,
+ httpOnly cookie   │  ▲          /ws/leagues/{id}                    memberships,
+        │          └──┘  WebSocket events   bcrypt + JWT auth          predictions, picks
+        └──────► refresh token in an httpOnly cookie ─────────────────┘
 ```
 
 - **Auth:** passwords are bcrypt-hashed; access is via a signed JWT sent as a Bearer token.
+  The access token lives in memory only; the refresh token lives in an `httpOnly` cookie
+  (`SameSite=None; Secure; Path=/api/auth`), and the cookie-authenticated endpoints
+  require a CSRF token (an `X-CSRF-Token` header) and a known `Origin`.
 - **Authorization:** league endpoints verify membership; only a prediction's creator may resolve it.
 - **Leaderboard is derived, not stored:** it is computed from settled picks on every request,
   so it can never drift out of sync.
@@ -66,7 +71,7 @@ React (Vercel)  ──HTTP/JSON──▶  FastAPI (Render)  ──SQLAlchemy─�
   commit your own (or the prediction is resolved).
 - **Hardened:** auth endpoints are rate limited, passwords need 8+ characters, inputs are
   length-limited (league name 1–100, question 1–500), and every response carries security
-  headers.
+  headers. Nothing that can sign you in is kept in `localStorage`.
 - **Account management:** the account screen can change the password (which signs every
   other device out) and delete the account (open predictions are voided, the picks are
   removed, and leagues you are the last member of are deleted).
@@ -161,17 +166,19 @@ The frontend reads its API URL from `VITE_API_URL` (falls back to `http://localh
 ## API
 
 All league/prediction endpoints require a `Bearer` token. Emails are never exposed to
-other users — only nicknames.
+other users — only nicknames. The auth endpoints set the session cookie; `signup`,
+`login`, `refresh` and `change-password` also return a `csrf_token`, which the client
+sends back as the `X-CSRF-Token` header on `logout` and `logout-all`.
 
 | Method | Path                                     | Body                     | Success | Errors |
 |--------|------------------------------------------|--------------------------|---------|--------|
 | GET    | `/api/health`                            | —                        | 200 `{"status":"ok"}` | — |
-| POST   | `/api/auth/signup`                       | `{email, nickname, password}` | 201 `{access_token, refresh_token}` | 409 email/nickname taken |
-| POST   | `/api/auth/login`                        | `{email, password}`      | 200 `{access_token, refresh_token}` | 401 bad credentials |
-| POST   | `/api/auth/refresh`                      | `{refresh_token}`        | 200 new token pair | 401 invalid/expired/revoked/reused |
-| POST   | `/api/auth/logout`                       | `{refresh_token}`        | 200 `{"ok": true}` | — |
-| POST   | `/api/auth/logout-all`                   | —                        | 200 `{"ok": true}` (all sessions revoked) | 401 |
-| POST   | `/api/auth/change-password`              | `{current_password, new_password}` | 200 new token pair | 400 wrong current password, 400 same password, 401 |
+| POST   | `/api/auth/signup`                       | `{email, nickname, password}` | 201 `{access_token, csrf_token}` + cookie | 409 email/nickname taken |
+| POST   | `/api/auth/login`                        | `{email, password}`      | 200 `{access_token, csrf_token}` + cookie | 401 bad credentials |
+| POST   | `/api/auth/refresh`                      | — (the cookie)           | 200 `{access_token, csrf_token}` + cookie | 401 invalid/expired/revoked/reused |
+| POST   | `/api/auth/logout`                       | —                        | 200 `{"ok": true}` | 403 bad origin, 403 bad/missing CSRF token |
+| POST   | `/api/auth/logout-all`                   | —                        | 200 `{"ok": true}` (all sessions revoked) | 401, 403 |
+| POST   | `/api/auth/change-password`              | `{current_password, new_password}` | 200 `{access_token, csrf_token}` + cookie | 400 wrong current password, 400 same password, 401 |
 | POST   | `/api/auth/delete-account`                | `{password}`             | 200 `{"ok": true}` | 400 wrong password, 409 owns a league with other members |
 | GET    | `/api/auth/me`                           | —                        | 200 `{id, email, nickname}` | 401 |
 | POST   | `/api/leagues`                           | `{name}`                 | 201 league | 401 |
@@ -207,8 +214,11 @@ other users — only nicknames.
   on every use. Replaying a rotated token after a 15-second grace window revokes every
   session. "Log out all" bumps a per-user token version, invalidating outstanding access
   tokens immediately. Changing the password does the same and revokes every refresh token.
-  Tokens live in `localStorage` (the usual XSS trade-off); an httpOnly cookie mode is a
-  possible future hardening step.
+  The access token lives in memory only (a reload asks the server for a new one), and the
+  refresh token lives in an `httpOnly` cookie (`SameSite=None; Secure; Path=/api/auth`),
+  so no script can read it. The cookie-authenticated endpoints check the `Origin` header
+  and require a CSRF token (`X-CSRF-Token`) on `logout` and `logout-all`; `refresh` is
+  exempt, because the app has to be able to restore a session after a reload.
 - **Deleting an account:** `POST /api/auth/delete-account` needs the current password. The
   user's open predictions are voided (they stay visible, with a `void` badge, so the other
   members' picks still count), their picks are removed, and every league where they are the
