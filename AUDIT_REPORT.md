@@ -385,8 +385,8 @@ over, (c) `REFRESH_COOKIE_ONLY` is turned on and the body token is gone. See `DE
 
 ### Verification
 - `python3 -m pytest tests -q` (from `backend/`, against a scratch PostgreSQL 16 instance)
-  → **144 passed** (123 after M25 + 19 M26 session cookie + 2 M26 pool pre-ping). Neon
-  was not touched.
+  → **146 passed** (123 after M25 + 19 M26 session cookie + 2 M26 pool pre-ping + 2 M26
+  rollout). Neon was not touched.
 - `npm test` (in `frontend/`) → **53 passed** (5 files, ~1.5s, no warnings).
 - Mutation check on the new M26 guards — every one of them is caught by a test:
   dropping `httponly` → the cookie test fails; dropping the origin check → 4 failures;
@@ -430,6 +430,27 @@ over, (c) `REFRESH_COOKIE_ONLY` is turned on and the body token is gone. See `DE
   - The CORS preflight for `Origin: https://frager-ten.vercel.app` answers
     `access-control-allow-origin: https://frager-ten.vercel.app` with
     `access-control-allow-credentials: true` ✓ — the browser will send the cookie.
+- Production check after the M26 phase (b) deploy (frontend `b4a5856`) — **9/9 checks
+  passed**:
+  - The deployed bundle is `index-OtOIwzxU.js`, and it is **byte-identical** to the
+    bundle built locally from the same commit (`VITE_API_URL=https://frager-backend.onrender.com
+    npm run build` → the same file name and the same bytes) — the deployed frontend is
+    exactly the reviewed source.
+  - The bundle sends the cookie (`credentials:"include"`), sends the CSRF token
+    (`X-CSRF-Token`), asks the server on boot (`/api/auth/refresh`), and contains **no**
+    `localStorage.setItem` or `localStorage.getItem` at all — the only thing it does with
+    the old keys is delete them.
+- Production check after the M26 phase (c) deploy (backend `6b400cf`) — **12/12 checks
+  passed**:
+  - The signup answer still sets the cookie, but the body no longer carries a refresh
+    token (`refresh_token: null`) — only the access token and the CSRF token.
+  - A refresh with the cookie alone → `200` (and again no refresh token in the body).
+  - A refresh with a body token and no cookie → `401 Invalid refresh token` — the door
+    the old clients used is closed.
+  - A foreign `Origin` → `403 Origin not allowed`; a logout without the CSRF token →
+    `403 CSRF token missing or invalid`; a logout with it → `200` ✓.
+  - Neon after the probes: 10 users, 1 league, 2 memberships, 1 prediction, 2 picks,
+    0 orphan predictions — exactly the state before them. No probe rows left.
 - Production check after the M25 deploy (migration `migrate_v25_creator_set_null` on
   Neon → 2 changes, then 0 on a repeat run; backend `f51589b` + `3316bfc`; frontend
   `c6ddd48`), with throwaway probe accounts that were deleted afterwards:

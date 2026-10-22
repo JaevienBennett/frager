@@ -73,6 +73,10 @@ This file is the short version: the rules that are easy to break by accident.
   and `Secure` in production; `SameSite=Lax` over plain http (localhost, the test
   client). Every frontend request needs `credentials: 'include'` or the cookie never
   travels.
+- **The pool must ping a connection before handing it out.** Neon (or the proxy in front
+  of it) closes idle connections; without `pool_pre_ping=True` in
+  `backend/app/database.py` the first request after a quiet period answers 500. That
+  was found by a production probe, not by a test.
 - **The frontend bundle is content-hashed**; the same source produces the same filename.
   A changed hash after a refactor means behaviour changed. Compare against the previous
   build to prove a refactor was a no-op.
@@ -80,7 +84,7 @@ This file is the short version: the rules that are easy to break by accident.
 ## Commands
 
 ```bash
-# backend tests (142) - needs a scratch PostgreSQL, never production
+# backend tests (146) - needs a scratch PostgreSQL, never production
 cd backend && DATABASE_URL='postgresql+psycopg2://postgres@localhost:55432/frager' python3 -m pytest tests -q
 
 # frontend tests (53) and build

@@ -216,7 +216,7 @@ sends back as the `X-CSRF-Token` header on `logout` and `logout-all`.
   tokens immediately. Changing the password does the same and revokes every refresh token.
   The access token lives in memory only (a reload asks the server for a new one), and the
   refresh token lives in an `httpOnly` cookie (`SameSite=None; Secure; Path=/api/auth`),
-  so no script can read it. The cookie-authenticated endpoints check the `Origin` header
+  so no script can read it. The refresh token is never handed out in a response body. The cookie-authenticated endpoints check the `Origin` header
   and require a CSRF token (`X-CSRF-Token`) on `logout` and `logout-all`; `refresh` is
   exempt, because the app has to be able to restore a session after a reload.
 - **Deleting an account:** `POST /api/auth/delete-account` needs the current password. The

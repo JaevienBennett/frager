@@ -121,8 +121,8 @@ Never deploy (b) before (a): without the cookie the app cannot restore a session
 reload. Never deploy (c) before (b): an old frontend still sends the body token and
 would be signed out on every reload.
 
-Phase (c) is the env flag `REFRESH_COOKIE_ONLY=true` on Render (the code default is
-`false` so the backend can be deployed before the frontend).
+Phase (c) is the code default of `REFRESH_COOKIE_ONLY` (`true` since M26 went live);
+the env var can put the body token back for one deploy if a client cannot be updated.
 
 **Check the origin before phase (a).** The cookie is cross-site (Vercel → Render), so it
 is `SameSite=None; Secure`, and the backend refuses a mutating auth request whose
