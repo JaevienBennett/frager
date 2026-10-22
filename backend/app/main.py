@@ -85,19 +85,27 @@ async def websocket_league(websocket: WebSocket, league_id: int, token: str = Qu
     try:
         payload = decode_access_token(token)
         user_id = int(payload.get("sub"))
+        token_version = int(payload.get("ver", 0) or 0)
     except Exception:
         await websocket.close()
         return
     from .database import SessionLocal
+    from .models import User
 
     db = SessionLocal()
     try:
+        user = db.get(User, user_id)
+        if user is None or user.token_version != token_version:
+            # The account is gone, or the token was invalidated by a password
+            # change: the socket must not stay open.
+            await websocket.close()
+            return
         if not is_member(db, league_id, user_id):
             await websocket.close()
             return
     finally:
         db.close()
-    await ws_module.manager.connect(league_id, websocket)
+    await ws_module.manager.connect(league_id, websocket, user_id)
     try:
         while True:
             await websocket.receive_text()

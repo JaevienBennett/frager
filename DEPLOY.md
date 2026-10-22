@@ -30,6 +30,7 @@ cd backend
 DATABASE_URL="<render's database url>" .venv/bin/python -m migrations.migrate_v14_auto_resolve
 DATABASE_URL="<render's database url>" .venv/bin/python -m migrations.migrate_v18_cascades
 DATABASE_URL="<render's database url>" .venv/bin/python -m migrations.migrate_v20_sessions
+DATABASE_URL="<render's database url>" .venv/bin/python -m migrations.migrate_v25_creator_set_null
 ```
 
 `create_tables.py` and all `migrations/*` scripts are idempotent. Run
@@ -39,6 +40,9 @@ This is required before the M19 league-delete endpoint is used — without it,
 `DELETE /api/leagues/{id}` fails with a foreign-key violation. It has already been applied
 to the current Neon database. Run `migrate_v20_sessions` once on Neon to add
 `users.token_version` and the hashed `refresh_tokens` table (required for M20 sessions).
+Run `migrate_v25_creator_set_null` once on Neon to make `predictions.creator_id`
+nullable with `ON DELETE SET NULL` (required for M25 account deletion: the prediction
+survives, nobody owns it).
 
 > **Order matters.** Migrations must run *before* the new code is deployed, because the
 > new backend code selects columns that do not exist yet. If you push to `main` first,
@@ -50,7 +54,10 @@ to the current Neon database. Run `migrate_v20_sessions` once on Neon to add
 > 2. confirm it is idempotent by running it a second time (expect 0 changes),
 > 3. only then push the code that depends on it.
 >
-> **M21–M23 change no tables**, so no migration is needed for them.
+> **M21–M23 change no tables**, so no migration is needed for them. **M25 does**: run
+> `migrate_v25_creator_set_null` before the M25 backend is deployed, otherwise
+> `POST /api/auth/delete-account` fails with a foreign-key violation the moment it
+> deletes a user.
 
 ## 2. Backend on Render
 
@@ -106,18 +113,21 @@ The API sits behind Cloudflare → Render → uvicorn.
   proxy and rewrites `request.client` from the **first** `X-Forwarded-For` entry — an
   entry the caller writes. Frager therefore does **not** key its rate limits on
   `request.client.host`.
-- Limits key on the account (email) and on the signed-in user (JWT subject) first; the
-  caller's address is only used as a secondary layer and is taken from
-  `CF-Connecting-IP` (which Cloudflare overwrites) or from the last `X-Forwarded-For`
-  entry (which Render appends).
+- Limits key on the signed-in user (JWT subject); the caller's address is only used as a
+  secondary layer and is taken from `CF-Connecting-IP` (which Cloudflare overwrites) or
+  from the last `X-Forwarded-For` entry (which Render appends). Login and signup add a
+  **per-account failure budget** (10 login / 5 signup failures a minute) on top of the
+  per-address limit. Only failures count, so a correct password always gets in.
 - The counters live in process memory, so they are per instance. Render currently runs a
   single instance; scaling out would need a shared store (Redis).
-- After deploying, verify with two probes: repeated logins for one account must return
-  `429` on the 11th attempt even when `X-Forwarded-For` changes every time.
+- After deploying, verify with two probes: repeated *failed* logins for one account must
+  return `429` on the 11th failure even when `X-Forwarded-For` changes every time, while
+  a correct login always succeeds.
 
 Checked on the deployed service:
 
-- A login with a fresh `X-Forwarded-For` on every request → `429` on the 11th attempt.
+- A login with a fresh `X-Forwarded-For` on every request → `429` on the 11th *failed*
+  attempt; the same account with the right password still logs in.
 - A request that sends its own `CF-Connecting-IP` is refused by Cloudflare with `403`
   before it reaches Render, so that header cannot be forged from the outside.
 - The websocket sends `prediction_created`, `pick_updated`, `leaderboard_updated` and

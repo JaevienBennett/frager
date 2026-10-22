@@ -13,6 +13,7 @@ from app.database import engine
 from app.main import app
 from app.schemas import LeagueCreate, PredictionCreate
 from migrations import migrate_v18_cascades
+from migrations import migrate_v25_creator_set_null
 
 CASCADE_SCHEMA = "m18_cascade_test"
 
@@ -20,7 +21,6 @@ TARGET_FKS = (
     ("memberships", "league_id", "leagues", "id"),
     ("memberships", "user_id", "users", "id"),
     ("predictions", "league_id", "leagues", "id"),
-    ("predictions", "creator_id", "users", "id"),
     ("picks", "prediction_id", "predictions", "id"),
     ("picks", "user_id", "users", "id"),
     ("leagues", "owner_id", "users", "id"),
@@ -170,7 +170,6 @@ def test_models_declare_cascade_on_target_fks():
         ("memberships", "league_id"),
         ("memberships", "user_id"),
         ("predictions", "league_id"),
-        ("predictions", "creator_id"),
         ("picks", "prediction_id"),
         ("picks", "user_id"),
         ("leagues", "owner_id"),
@@ -184,6 +183,17 @@ def test_models_declare_cascade_on_target_fks():
                 if fk.ondelete == "CASCADE":
                     found.add((table.name, column.name))
     assert found == expected
+
+
+def test_prediction_creator_is_set_null_not_cascade():
+    """M25: a prediction outlives the account that made it.
+
+    ON DELETE CASCADE here would take the picks other members made on the
+    prediction with it and silently rewrite their points.
+    """
+    column = models.Base.metadata.tables["predictions"].columns["creator_id"]
+    assert column.nullable
+    assert [fk.ondelete for fk in column.foreign_keys] == ["SET NULL"]
 
 
 def _fk_rules(conn, schema, table, column, ref_table):
@@ -224,6 +234,10 @@ def _create_legacy_schema(conn, schema):
     touched.  ``schema_translate_map`` keeps the whole thing compile-time
     only: no server side session state is changed, so nothing leaks into the
     connection pool.
+
+    ``predictions.creator_id`` is put back the way it was before M25 as well:
+    NOT NULL, without a delete rule.  M25 (migration 25) is what turns it into
+    a nullable column with ON DELETE SET NULL.
     """
     translate = {None: schema}
     conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
@@ -233,8 +247,14 @@ def _create_legacy_schema(conn, schema):
             CreateTable(table).compile(
                 dialect=conn.dialect, schema_translate_map=translate
             )
-        ).replace(" ON DELETE CASCADE", "")
+        ).replace(" ON DELETE CASCADE", "").replace(" ON DELETE SET NULL", "")
         conn.execute(text(ddl))
+    conn.execute(
+        text(
+            f'ALTER TABLE "{schema}"."predictions" '
+            f'ALTER COLUMN "creator_id" SET NOT NULL'
+        )
+    )
     conn.commit()
 
 
@@ -321,13 +341,21 @@ def _seed_graph(session):
 
 
 def test_delete_user_cascades_to_dependents():
-    """Deleting a user must remove their league, membership, prediction, pick."""
+    """Deleting a user must remove their league, membership and picks.
+
+    The prediction goes with the league: the user is its only member, so the
+    league is deleted with them.  A prediction in somebody else's league is a
+    different story and is covered by the M25 tests.
+    """
     _drop_schema(CASCADE_SCHEMA)
     try:
         conn = _translated_engine(CASCADE_SCHEMA).connect()
         try:
             _create_legacy_schema(conn, CASCADE_SCHEMA)
             migrate_v18_cascades.migrate(schema=CASCADE_SCHEMA)
+            # M25 owns predictions.creator_id now: it is nullable and the
+            # foreign key sets it to null instead of cascading.
+            migrate_v25_creator_set_null.migrate(schema=CASCADE_SCHEMA)
             conn.commit()
 
             session = Session(bind=conn)
@@ -362,6 +390,9 @@ def test_delete_league_cascades_to_memberships_and_predictions():
         try:
             _create_legacy_schema(conn, CASCADE_SCHEMA)
             migrate_v18_cascades.migrate(schema=CASCADE_SCHEMA)
+            # M25 owns predictions.creator_id now: it is nullable and the
+            # foreign key sets it to null instead of cascading.
+            migrate_v25_creator_set_null.migrate(schema=CASCADE_SCHEMA)
             conn.commit()
 
             session = Session(bind=conn)

@@ -6,14 +6,16 @@ headers middleware rewrites ``request.client`` with the *first*
 limits on ``request.client.host`` let anybody walk around a limit by sending a
 fresh header with every request.
 
-Three kinds of key are used instead:
+Two kinds of key are used instead:
 
 ``client_ip``   coarse abuse layer. The address of the caller, not of a
                 header the caller wrote.
-``account_key`` the account being used. A caller cannot change the account it
-                logs in to, so this limit cannot be dodged by rotating IPs or
-                headers. This is the real defence against credential stuffing.
 ``user_key``    the signed-in user (the subject of the access token).
+
+Credentials get a third, softer budget in ``note_failed_attempt``. It is keyed
+on the account being tried and only counts *failures*, so a correct password is
+never refused. That matters: a limit that counts successes can be turned into
+a lockout by anybody who knows an email address.
 """
 
 from __future__ import annotations
@@ -22,6 +24,13 @@ from fastapi import HTTPException, Request
 from slowapi import Limiter
 
 from .security import decode_access_token
+
+# How many wrong passwords one account may spend inside the window. The
+# window is the same length as the per-IP login limit.
+FAILED_ATTEMPT_LIMIT = 10
+FAILED_ATTEMPT_WINDOW_SECONDS = 60
+# Signup conflicts (email or nickname taken) get their own, smaller budget.
+SIGNUP_ATTEMPT_LIMIT = 5
 
 
 def _clean_header(request: Request, name: str) -> str | None:
@@ -55,16 +64,35 @@ def client_ip(request: Request) -> str:
     return client.host if client is not None else "unknown"
 
 
-def account_key(request: Request) -> str:
-    """Key on the account in use instead of on where the request came from.
+def failed_attempt_key(email: str, kind: str = "login") -> str:
+    """Key on the account whose attempts are failing.
 
-    The email is read from ``request.state.email``, which the auth dependency
-    stores before the limit is checked.
+    The address is normalised so that one account cannot buy itself a fresh
+    budget by changing the case of the address it guesses.
     """
-    email = getattr(request.state, "email", None)
-    if email:
-        return f"account:{email}"
-    return f"ip:{client_ip(request)}"
+    return f"failed-{kind}:{email.strip().lower()}"
+
+
+def note_failed_attempt(email: str, kind: str = "login") -> None:
+    """Charge one failed attempt to the account and refuse it when spent.
+
+    Only failures are charged. A correct password is never blocked, so nobody
+    can lock a known account out of signing in by guessing at it; this is the
+    defence against credential stuffing that a plain per-account request
+    counter used to provide.
+
+    Every address is charged the same way, including addresses that have no
+    account, so the answer does not reveal whether an account exists.
+    """
+    limit = SIGNUP_ATTEMPT_LIMIT if kind == "signup" else FAILED_ATTEMPT_LIMIT
+    count = limiter._storage.incr(
+        failed_attempt_key(email, kind), FAILED_ATTEMPT_WINDOW_SECONDS
+    )
+    if count > limit:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Try again later.",
+        )
 
 
 def user_key(request: Request) -> str:
@@ -81,23 +109,6 @@ def user_key(request: Request) -> str:
             if subject is not None:
                 return f"user:{subject}"
     return f"ip:{client_ip(request)}"
-
-
-async def stash_account_email(request: Request) -> None:
-    """Remember the email of the request so the limit can key on the account.
-
-    FastAPI resolves dependencies before it calls the endpoint, and the limit
-    is checked inside the endpoint, so the value is in place by then.
-    """
-    try:
-        payload = await request.json()
-    except Exception:
-        return
-    if not isinstance(payload, dict):
-        return
-    email = payload.get("email")
-    if isinstance(email, str) and email.strip():
-        request.state.email = email.strip().lower()
 
 
 limiter = Limiter(key_func=client_ip)

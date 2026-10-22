@@ -128,7 +128,15 @@ def leave_league(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    league = db.get(League, league_id)
+    # The league row is locked so that a leave and a transfer cannot
+    # interleave: without the lock a league could end up owned by somebody who
+    # was in the middle of leaving it.
+    league = (
+        db.query(League)
+        .filter(League.id == league_id)
+        .with_for_update()
+        .first()
+    )
     if league is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="League not found")
     membership = (
@@ -189,7 +197,15 @@ def transfer_ownership(
     The former owner stays a member and may leave afterwards; the new owner
     inherits the "cannot leave an owned league" rule.
     """
-    league = db.get(League, league_id)
+    # Lock the league row so a leave cannot slip in between the membership
+    # check above and the update below: the target of the transfer has to
+    # still be a member when the league changes hands.
+    league = (
+        db.query(League)
+        .filter(League.id == league_id)
+        .with_for_update()
+        .first()
+    )
     if league is None or not is_member(db, league_id, user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="League not found")
     if league.owner_id != user.id:
@@ -229,8 +245,9 @@ def transfer_ownership(
             status_code=status.HTTP_409_CONFLICT,
             detail="Ownership changed; reload and try again",
         )
-    db.commit()
+    db.flush()
     db.refresh(league)
+    db.commit()
     ws.broadcast_nowait(
         league_id,
         {"type": "league_updated", "league_id": league_id, "owner_id": body.new_owner_id},

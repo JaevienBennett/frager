@@ -154,11 +154,12 @@ def test_broadcast_does_not_leak_an_unawaited_coroutine():
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            client.post(
+            picked = client.post(
                 f"/api/predictions/{prediction_id}/pick",
                 json={"side": "no", "stake": 1},
                 headers=ctx["headers"],
             )
+            assert picked.status_code == 201, picked.text
         offenders = [
             str(w.message)
             for w in caught
@@ -167,22 +168,41 @@ def test_broadcast_does_not_leak_an_unawaited_coroutine():
         assert offenders == []
 
 
-def test_broadcast_nowait_from_a_plain_thread_does_not_raise():
-    """The helper is also called from places without an event loop."""
+def test_a_broadcast_from_a_plain_thread_reaches_a_connected_client():
+    """The helper is also called from places without an event loop.
+
+    The old test only checked that nothing was raised, which cannot fail:
+    the helper swallows every error. This one checks that the message really
+    arrives.
+    """
     ctx = _make_user()
     errors = []
 
-    def _worker():
-        try:
-            ws.broadcast_nowait(ctx["league_id"], {"type": "leaderboard_updated"})
-        except Exception as exc:  # pragma: no cover - must not happen
-            errors.append(exc)
+    with TestClient(app) as client:
+        with client.websocket_connect(
+            f"/ws/leagues/{ctx['league_id']}?token={ctx['token']}"
+        ) as session:
 
-    thread = threading.Thread(target=_worker)
-    thread.start()
-    thread.join(5)
-    assert not thread.is_alive()
-    assert errors == []
+            def _worker():
+                try:
+                    ws.broadcast_nowait(
+                        ctx["league_id"],
+                        {
+                            "type": "leaderboard_updated",
+                            "league_id": ctx["league_id"],
+                        },
+                    )
+                except Exception as exc:  # pragma: no cover - must not happen
+                    errors.append(exc)
+
+            thread = threading.Thread(target=_worker)
+            thread.start()
+            thread.join(5)
+            assert not thread.is_alive()
+            assert errors == []
+
+            message, _ = _receive_until(session, "leaderboard_updated")
+            assert message["league_id"] == ctx["league_id"]
 
 
 def test_websocket_rejects_a_stranger():

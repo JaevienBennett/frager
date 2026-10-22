@@ -4,6 +4,75 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
+## Milestone 25 — Account management + the M21–M24 review findings (DONE)
+
+```
+TITLE: Milestone 25 — Account management + the M21–M24 review findings
+
+CONTEXT
+Claude reviewed M21-M24 and found two serious problems and a handful of smaller ones.
+The serious ones: the per-account login limit counted EVERY attempt, so ten successful
+logins locked a legitimate user out of their own account (a shared address, a mistyped
+password, a bot guessing one account); and the tests that were supposed to prove the
+rate limit cannot be walked around passed for the wrong reason (the assertions ran before
+the request was made). There is also no way to change a password or to delete an account
+today, and a deleted account would take its predictions with it - which would wipe the
+points other members earned on a settled prediction.
+
+GOAL
+Let a user change their password and delete their account, and fix every review finding.
+
+BACKEND
+1. POST /api/auth/change-password {current_password, new_password}
+   - 400 "Current password is incorrect" when the current password is wrong
+   - 400 "New password must be different from the current password" when it is the same
+   - on success: hash the new password, bump user.token_version, revoke every refresh
+     token, close that user's websockets, return a fresh token pair
+2. POST /api/auth/delete-account {password}
+   - 400 "Password is incorrect" when the password is wrong
+   - 409 "Transfer or delete the leagues you own that have other members first" when the
+     user owns a league that still has other members
+   - on success: lock the user row FOR UPDATE, void the user's OPEN predictions, delete
+     their picks, delete the user, close their websockets, return {"ok": true}
+3. The rate limit must count only FAILURES: rate_limit.note_failed_attempt(email, kind)
+   spends a per-account budget of 10 login / 5 signup failures a minute. A correct
+   password always gets in. account_key() and stash_account_email() are removed.
+4. predictions.creator_id becomes nullable with ON DELETE SET NULL, so a prediction
+   survives its creator's account (other members' picks keep counting) and nobody owns
+   it any more - nobody can resolve it. Needs an idempotent migration
+   (migrations/migrate_v25_creator_set_null.py) that discovers the FK name through
+   pg_constraint.
+5. leave_league and transfer_ownership must lock the league row (FOR UPDATE) so a leave
+   and a transfer at the same time cannot leave the league owned by a non-member.
+6. A websocket that times out or errors on send must be dropped from the manager, and the
+   handshake must reject a token whose ver claim is older than user.token_version.
+
+FRONTEND
+7. An Account view next to "Log out all": change the password, and delete the account
+   (the nickname has to be typed to confirm; the leagues that block the deletion are
+   listed; the leagues that will be deleted are listed).
+8. A voided prediction gets a void badge and a banner, not the "open" badge.
+9. Fix the review nits: clear the member list when the member load fails, and make the
+   catch-all route in the frontend tests GET-only so an unmocked POST fails loudly.
+
+CONSTRAINTS (must follow)
+- The leaderboard is still derived from settled picks. Voiding a prediction moves nobody's
+  points. Never store points.
+- Only the prediction's creator may resolve it, and only once. A second resolve is 409.
+- Predictions whose creator deleted their account have creator_id = null and can never be
+  resolved again.
+- No schema change without an idempotent migration. Never run a migration against Neon
+  without explicit approval - verify against a scratch PostgreSQL first.
+- Deploy order: migration, then backend, then frontend.
+- Do not start long-running servers.
+- Shared checkout rules as specified (do not switch branches, do not commit, do not push)
+
+Report back: files changed/created, the exact commands to run the tests, the test counts
+before and after, and proof that the failure budget and the delete-account guard work.
+```
+
+---
+
 ## Milestone 24 — Frontend test infrastructure (Vitest) + first UI tests
 
 ```

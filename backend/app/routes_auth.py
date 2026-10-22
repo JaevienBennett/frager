@@ -2,12 +2,22 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from . import rate_limit
+from . import ws
 from .config import REFRESH_TOKEN_EXPIRE_DAYS
-from .models import RefreshToken, User
-from .schemas import Credentials, RefreshRequest, SignupRequest, Token, UserOut
+from .models import League, Membership, Prediction, RefreshToken, User
+from .schemas import (
+    AccountDelete,
+    Credentials,
+    PasswordChange,
+    RefreshRequest,
+    SignupRequest,
+    Token,
+    UserOut,
+)
 from .security import (
     create_access_token,
     get_current_user,
@@ -72,21 +82,21 @@ def _revoke_active_refresh_tokens(
 
 @router.post("/signup", response_model=Token, status_code=status.HTTP_201_CREATED)
 @rate_limit.limiter.limit("5/minute")
-@rate_limit.limiter.limit("5/minute", key_func=rate_limit.account_key)
 def signup(
     request: Request,
     body: SignupRequest,
     db: Session = Depends(get_db),
-    _account: None = Depends(rate_limit.stash_account_email),
 ):
     existing = db.query(User).filter(User.email == body.email).first()
     if existing is not None:
+        rate_limit.note_failed_attempt(body.email, kind="signup")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email already registered",
         )
     existing = db.query(User).filter(User.nickname == body.nickname).first()
     if existing is not None:
+        rate_limit.note_failed_attempt(body.email, kind="signup")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Nickname already taken",
@@ -104,15 +114,16 @@ def signup(
 
 @router.post("/login", response_model=Token)
 @rate_limit.limiter.limit("10/minute")
-@rate_limit.limiter.limit("10/minute", key_func=rate_limit.account_key)
 def login(
     request: Request,
     body: Credentials,
     db: Session = Depends(get_db),
-    _account: None = Depends(rate_limit.stash_account_email),
 ):
     user = db.query(User).filter(User.email == body.email).first()
     if user is None or not verify_password(body.password, user.password_hash):
+        # Only failures are charged to the account, so a correct password is
+        # never refused: nobody can lock a known account out of signing in.
+        rate_limit.note_failed_attempt(body.email)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -218,3 +229,108 @@ def logout_all(
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)):
     return user
+
+
+@router.post("/change-password", response_model=Token)
+@rate_limit.limiter.limit("5/minute", key_func=rate_limit.user_key)
+@rate_limit.limiter.limit("20/hour", key_func=rate_limit.user_key)
+def change_password(
+    request: Request,
+    body: PasswordChange,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Change the caller's password and drop every other session.
+
+    The old password is checked first, so the answer never says whether a
+    password would be accepted without the current one being right.
+    """
+    if not verify_password(body.current_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect",
+        )
+    if body.new_password == body.current_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be different from the current password",
+        )
+    user.password_hash = hash_password(body.new_password)
+    user.token_version += 1
+    _revoke_active_refresh_tokens(db, user.id, _now(), "password_change")
+    db.commit()
+    db.refresh(user)
+    # The access token this session was opened with is dead now. Drop the
+    # sockets that were opened with it so they stop receiving updates.
+    ws.close_user_nowait(user.id)
+    return _issue_session(db, user)
+
+
+@router.post("/delete-account")
+@rate_limit.limiter.limit("5/minute", key_func=rate_limit.user_key)
+@rate_limit.limiter.limit("20/hour", key_func=rate_limit.user_key)
+def delete_account(
+    request: Request,
+    body: AccountDelete,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete the caller's account, their picks and their open predictions.
+
+    A league the caller owns that has other members in it has to be handed
+    over or deleted first: deleting it here would take the other members'
+    picks with it and rewrite their points.
+    """
+    # Lock the row so two requests at once cannot both pass the checks below.
+    locked = (
+        db.query(User).filter(User.id == user.id).with_for_update().first()
+    )
+    if locked is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+        )
+    if not verify_password(body.password, locked.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password is incorrect",
+        )
+
+    blocking = (
+        db.query(League)
+        .join(Membership, Membership.league_id == League.id)
+        .filter(League.owner_id == locked.id)
+        .group_by(League.id)
+        .having(func.count(Membership.id) > 1)
+        .all()
+    )
+    if blocking:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Transfer or delete the leagues you own that have other members first",
+        )
+
+    # Predictions the caller made by hand and never resolved are voided: with
+    # the creator gone nobody can settle them any more. Games that settle
+    # themselves stay open and keep working.
+    (
+        db.query(Prediction)
+        .filter(
+            Prediction.creator_id == locked.id,
+            Prediction.status == "open",
+            or_(
+                Prediction.resolution_source.is_(None),
+                Prediction.resolution_source != "auto",
+            ),
+        )
+        .update({"status": "void"}, synchronize_session=False)
+    )
+
+    user_id = locked.id
+    # Memberships, picks and refresh tokens go with the user. Predictions the
+    # user created keep the picks other members made on them and keep their
+    # points; only their creator becomes nobody.
+    db.delete(locked)
+    db.commit()
+    ws.close_user_nowait(user_id)
+    return {"ok": True}

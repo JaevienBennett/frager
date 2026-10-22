@@ -67,6 +67,9 @@ React (Vercel)  ──HTTP/JSON──▶  FastAPI (Render)  ──SQLAlchemy─�
 - **Hardened:** auth endpoints are rate limited, passwords need 8+ characters, inputs are
   length-limited (league name 1–100, question 1–500), and every response carries security
   headers.
+- **Account management:** the account screen can change the password (which signs every
+  other device out) and delete the account (open predictions are voided, the picks are
+  removed, and leagues you are the last member of are deleted).
 
 ## Project layout
 
@@ -80,7 +83,7 @@ frager/
 │   │   ├── schemas.py           Pydantic request/response models
 │   │   ├── security.py          hashing, JWT, get_current_user, get_db
 │   │   ├── membership.py        is_member / require_member helpers
-│   │   ├── rate_limit.py        slowapi limiter (per-account / per-user / per-IP keys)
+│   │   ├── rate_limit.py        slowapi limiter (per-user / per-IP keys + failed-attempt budget)
 │   │   ├── ws.py                WebSocket connection manager (per league)
 │   │   ├── routes_auth.py       /api/auth/*
 │   │   ├── routes_leagues.py    /api/leagues/*
@@ -91,12 +94,14 @@ frager/
 │   ├── migrate_v7.py            ALTER users (nickname, backfill + unique index)
 │   ├── migrations/              migrate_v14_auto_resolve.py,
 │   │                            migrate_v18_cascades.py,
-│   │                            migrate_v20_sessions.py
+│   │                            migrate_v20_sessions.py,
+│   │                            migrate_v25_creator_set_null.py
 │   ├── tests/                   conftest.py, test_smoke_flows.py,
 │   │                            test_m14_auto_resolve.py, test_m18_validation.py,
 │   │                            test_m19_league_management.py, test_m20_sessions.py,
 │   │                            test_m21_ownership_transfer.py,
-│   │                            test_m22_ws_broadcast.py, test_m23_rate_limits.py
+│   │                            test_m22_ws_broadcast.py, test_m23_rate_limits.py,
+│   │                            test_m25_account.py, test_m25_migration.py
 │   ├── render.yaml
 │   └── requirements.txt
 └── frontend/
@@ -166,6 +171,8 @@ other users — only nicknames.
 | POST   | `/api/auth/refresh`                      | `{refresh_token}`        | 200 new token pair | 401 invalid/expired/revoked/reused |
 | POST   | `/api/auth/logout`                       | `{refresh_token}`        | 200 `{"ok": true}` | — |
 | POST   | `/api/auth/logout-all`                   | —                        | 200 `{"ok": true}` (all sessions revoked) | 401 |
+| POST   | `/api/auth/change-password`              | `{current_password, new_password}` | 200 new token pair | 400 wrong current password, 400 same password, 401 |
+| POST   | `/api/auth/delete-account`                | `{password}`             | 200 `{"ok": true}` | 400 wrong password, 409 owns a league with other members |
 | GET    | `/api/auth/me`                           | —                        | 200 `{id, email, nickname}` | 401 |
 | POST   | `/api/leagues`                           | `{name}`                 | 201 league | 401 |
 | GET    | `/api/leagues`                           | —                        | 200 user's leagues | 401 |
@@ -188,26 +195,39 @@ other users — only nicknames.
 
 - **Rate limits:** `POST /api/auth/signup` allows 5/minute, `POST /api/auth/login`
   10/minute, `POST /api/auth/refresh` 60/minute, and the logout endpoints 30/minute;
-  exceeding any returns `429`. Signup and login are limited **per account** as well as per
-  address, so guessing one password is capped at 10 attempts a minute even from many
-  addresses and with forged forwarding headers. The write endpoints (create/join/rename/
-  delete/leave/transfer, create/pick/resolve) are limited per signed-in user.
+  exceeding any returns `429`. Signup and login are limited **per address** and, on top of
+  that, failures are counted **per account** (10 login / 5 signup failures a minute).
+  Only failures count, so a correct password always gets in — the account can never be
+  locked out by someone else — and an address that fails 10 times a minute is capped even
+  with forged forwarding headers. The write endpoints (create/join/rename/delete/leave/
+  transfer, create/pick/resolve) are limited per signed-in user.
 - **Sessions:** access tokens last `ACCESS_TOKEN_EXPIRE_MINUTES` (default 60); refresh tokens
   last `REFRESH_TOKEN_EXPIRE_DAYS` (default 30), are stored only as SHA-256 hashes, and rotate
   on every use. Replaying a rotated token after a 15-second grace window revokes every
   session. "Log out all" bumps a per-user token version, invalidating outstanding access
-  tokens immediately. Tokens live in `localStorage` (the usual XSS trade-off); an httpOnly
-  cookie mode is a possible future hardening step.
+  tokens immediately. Changing the password does the same and revokes every refresh token.
+  Tokens live in `localStorage` (the usual XSS trade-off); an httpOnly cookie mode is a
+  possible future hardening step.
+- **Deleting an account:** `POST /api/auth/delete-account` needs the current password. The
+  user's open predictions are voided (they stay visible, with a `void` badge, so the other
+  members' picks still count), their picks are removed, and every league where they are the
+  only member is deleted. A league they own that still has other members has to be
+  transferred or deleted first (409). Settled predictions are kept, so the points other
+  members earned stay. The account's predictions survive with `creator_id = NULL`
+  (`ON DELETE SET NULL`) — nobody owns them any more, so nobody can resolve them. Existing
+  databases need `python -m migrations.migrate_v25_creator_set_null` once (see DEPLOY.md).
 - **Passwords:** signup and login require 8–128 characters.
 - **Input limits:** league names are 1–100 characters; prediction questions are 1–500
   (whitespace is trimmed). Validation is enforced on both the client and the server.
 - **League management:** only the owner can rename or delete a league; members can leave.
   The owner cannot leave — they transfer the league to another member or delete it. Every
   league has a shareable invite link (`/?join=CODE`) that pre-fills the join form.
-- **Deleting data:** core foreign keys are `ON DELETE CASCADE`, so deleting a league (or a
-  user) cleans up its memberships, predictions, and picks. Existing databases need
-  `python -m migrations.migrate_v18_cascades` once — the delete endpoints require it (see
-  DEPLOY.md).
+- **Deleting data:** core foreign keys are `ON DELETE CASCADE`, so deleting a league cleans
+  up its memberships, predictions, and picks. Deleting a *user* keeps their settled
+  predictions (the points other members earned stay) and voids their open ones; the
+  predictions survive with `creator_id = NULL`. Existing databases need
+  `python -m migrations.migrate_v18_cascades` and `python -m migrations.migrate_v25_creator_set_null`
+  once — the delete endpoints require them (see DEPLOY.md).
 - **Free-tier hosting:** the API sleeps after inactivity, so the first request can take
   ~30–60s to wake. The frontend shows a friendly "Waking up the server…" state and
   auto-retries, rather than failing.

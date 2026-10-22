@@ -10,6 +10,7 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app import models
 from app.database import SessionLocal
@@ -20,6 +21,18 @@ from app.security import create_access_token, hash_password
 # --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
+
+
+def _proxied_client():
+    """A test client that behaves like the production stack.
+
+    In production uvicorn runs its proxy headers middleware, which rewrites
+    ``request.client`` with the *first* X-Forwarded-For entry. The plain
+    TestClient never does that, so a test that used it could not tell an
+    implementation that keys on ``request.client.host`` apart from one that
+    does not.
+    """
+    return TestClient(ProxyHeadersMiddleware(app, trusted_hosts="*"))
 
 
 def _make_user(email=None, nickname=None):
@@ -92,16 +105,23 @@ def test_client_ip_falls_back_to_the_socket_address():
 
 
 def test_login_limit_holds_when_the_forwarded_header_is_rotated():
-    """A fresh X-Forwarded-For per request must not buy a fresh bucket."""
+    """A fresh X-Forwarded-For per request must not buy a fresh bucket.
+
+    The header is written the way the proxy chain writes it: the first entry
+    is the address the caller claims, the last one is the address the proxy
+    saw. The first entry is rotated here, so an implementation that keys on
+    ``request.client.host`` would hand every request its own bucket and never
+    hit the limit at all. The limit has to key on the last entry instead.
+    """
     user_id, email, _ = _make_user()
-    client = TestClient(app)
+    client = _proxied_client()
 
     codes = []
     for i in range(12):
         r = client.post(
             "/api/auth/login",
             json={"email": email, "password": "wrong-password"},
-            headers={"X-Forwarded-For": f"10.0.0.{i}, 10.1.1.{i}"},
+            headers={"X-Forwarded-For": f"10.0.0.{i}, 203.0.113.7"},
         )
         codes.append(r.status_code)
 
@@ -118,7 +138,7 @@ def test_login_limit_is_per_account():
     """
     _, email_a, _ = _make_user()
     _, email_b, _ = _make_user()
-    client = TestClient(app)
+    client = _proxied_client()
 
     def _login(email, index):
         return client.post(
@@ -141,14 +161,77 @@ def test_login_limit_is_per_account():
 
 
 def test_login_limit_does_not_count_a_correct_password():
-    _, email, _ = _make_user()
-    client = TestClient(app)
+    """A correct password never spends the account's budget.
 
-    for _ in range(3):
+    The address is rotated on every request, so the per-address limit cannot
+    be the one that fires: only the account budget could, and it must not be
+    charged for a password that was right.
+    """
+    _, email, _ = _make_user()
+    client = _proxied_client()
+
+    for i in range(12):
         r = client.post(
-            "/api/auth/login", json={"email": email, "password": "pass123456"}
+            "/api/auth/login",
+            json={"email": email, "password": "pass123456"},
+            headers={"X-Forwarded-For": f"198.51.100.{i}"},
         )
         assert r.status_code == 200, r.text
+
+
+def test_a_correct_login_is_never_blocked_by_failed_attempts():
+    """Nobody can lock a known account out of signing in.
+
+    The account budget only counts wrong passwords, so a correct one is
+    always let through - no matter how many guesses came before it.
+    """
+    _, email, _ = _make_user()
+    client = _proxied_client()
+
+    for i in range(12):
+        r = client.post(
+            "/api/auth/login",
+            json={"email": email, "password": "wrong-password"},
+            headers={"X-Forwarded-For": f"198.51.100.{i}"},
+        )
+        assert r.status_code in (401, 429), r.text
+
+    r = client.post(
+        "/api/auth/login",
+        json={"email": email, "password": "pass123456"},
+        headers={"X-Forwarded-For": "198.51.100.250"},
+    )
+    assert r.status_code == 200, r.text
+
+
+def test_the_failure_budget_does_not_reveal_whether_an_account_exists():
+    """A made-up address is spent exactly like a real one."""
+    _, email, _ = _make_user()
+    client = _proxied_client()
+
+    def _fail(address, index):
+        return client.post(
+            "/api/auth/login",
+            json={"email": address, "password": "wrong-password"},
+            headers={"X-Forwarded-For": f"198.51.100.{index}"},
+        )
+
+    for i in range(11):
+        _fail(email, i)
+    for i in range(11):
+        _fail("nobody-here@example.com", 100 + i)
+
+    real = client.post(
+        "/api/auth/login",
+        json={"email": email, "password": "wrong-password"},
+        headers={"X-Forwarded-For": "198.51.100.250"},
+    )
+    made_up = client.post(
+        "/api/auth/login",
+        json={"email": "nobody-here@example.com", "password": "wrong-password"},
+        headers={"X-Forwarded-For": "198.51.100.251"},
+    )
+    assert real.status_code == made_up.status_code == 429, (real.text, made_up.text)
 
 
 # --------------------------------------------------------------------------

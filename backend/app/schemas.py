@@ -31,6 +31,15 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class PasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class AccountDelete(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
+
+
 class UserOut(BaseModel):
     id: int
     email: str
@@ -108,7 +117,9 @@ class PredictionOut(BaseModel):
     id: int
     question: str
     status: str
-    creator_id: int
+    # None once the creator has deleted their account: the prediction stays
+    # (other members' picks on it still count) but nobody owns it.
+    creator_id: int | None
     created_at: datetime
     yes_count: int
     no_count: int

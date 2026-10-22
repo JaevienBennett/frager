@@ -43,9 +43,15 @@ This file is the short version: the rules that are easy to break by accident.
   (M22) — every live update was dead until it was fixed.
 - **Never key a rate limit on `request.client.host`.** Behind Render, uvicorn rewrites
   it from the *first* `X-Forwarded-For` entry, which the caller writes, so every limit
-  was bypassable. Use `account_key()` (email), `user_key()` (JWT subject), and
-  `client_ip()` (`backend/app/rate_limit.py`) — and note that `client_ip()` reads the
-  *last* `X-Forwarded-For` entry, not the first.
+  was bypassable. Use `user_key()` (JWT subject) and `client_ip()`
+  (`backend/app/rate_limit.py`) — and note that `client_ip()` reads the *last*
+  `X-Forwarded-For` entry, not the first.
+- **Do not rate-limit login/signup on the account key.** Counting *every* attempt per
+  email locks a legitimate user out (a shared address, a mistyped password, a bot
+  guessing one account). `rate_limit.note_failed_attempt(email, kind)` counts only
+  *failures* against a per-account budget (10 login / 5 signup a minute); a correct
+  password always gets in. `account_key()` and `stash_account_email()` were removed in
+  M25 — do not reintroduce them.
 - **slowapi details:** a per-limit `key_func` receives the request only if the endpoint
   parameter is literally named `request`; FastAPI resolves dependencies before the limit
   check, so `request.state.email` is available by then.
@@ -62,10 +68,10 @@ This file is the short version: the rules that are easy to break by accident.
 ## Commands
 
 ```bash
-# backend tests (92) - needs a scratch PostgreSQL, never production
+# backend tests (121) - needs a scratch PostgreSQL, never production
 cd backend && DATABASE_URL='postgresql+psycopg2://postgres@localhost:55432/frager' python3 -m pytest tests -q
 
-# frontend tests (35) and build
+# frontend tests (46) and build
 cd frontend && npm test
 cd frontend && npm run build
 
@@ -82,7 +88,7 @@ cd backend && python3 -c "import app.main"
 | `backend/app/routes_leagues.py` | leagues, invite links, join/leave, members, ownership transfer |
 | `backend/app/routes_predictions.py` | predictions, picks, resolve, leaderboard, WS broadcasts |
 | `backend/app/ws.py` | `ConnectionManager`, `broadcast_nowait()`, `set_event_loop()` |
-| `backend/app/rate_limit.py` | `client_ip()`, `account_key()`, `user_key()`, `stash_account_email` |
+| `backend/app/rate_limit.py` | `client_ip()`, `user_key()`, `failed_attempt_key()`, `note_failed_attempt()` |
 | `backend/app/models.py` | `User`, `League`, `Membership`, `Prediction`, `Pick`, `RefreshToken` |
 | `backend/app/schemas.py` | request/response models and their validation |
 | `backend/app/membership.py` | `is_member()` |

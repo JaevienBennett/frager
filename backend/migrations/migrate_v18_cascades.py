@@ -10,6 +10,11 @@ Running it twice is a no-op the second time: constraints that already have
 CASCADE are left untouched, and every target column ends up with exactly one
 correct constraint.
 
+``predictions.creator_id`` is deliberately NOT in this list. It is ON DELETE
+SET NULL (migration 25) so that a prediction outlives the account that made
+it; putting it back in this list would undo that whenever this migration is
+run again.
+
 Usage:
     cd backend
     python -m migrations.migrate_v18_cascades                 # public schema
@@ -39,7 +44,6 @@ TARGET_FKS = (
     ("memberships", "league_id", "leagues", "id"),
     ("memberships", "user_id", "users", "id"),
     ("predictions", "league_id", "leagues", "id"),
-    ("predictions", "creator_id", "users", "id"),
     ("picks", "prediction_id", "predictions", "id"),
     ("picks", "user_id", "users", "id"),
     ("leagues", "owner_id", "users", "id"),

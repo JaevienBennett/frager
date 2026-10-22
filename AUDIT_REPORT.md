@@ -238,15 +238,15 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 ### M23 — Rate limits that cannot be walked around
 - `backend/app/rate_limit.py`: rewritten. `client_ip()` returns the caller's address
   (`CF-Connecting-IP` — Cloudflare overwrites it — else the last `X-Forwarded-For` entry,
-  else the socket address), `account_key()` keys on the email of the account being used and
-  `user_key()` on the subject of the access token. `stash_account_email()` stores the email
-  on `request.state` in a dependency, which FastAPI resolves before the limit is checked.
+  else the socket address) and `user_key()` keys on the subject of the access token. The
+  per-account key that M23 originally added was replaced in M25 by a **failure-only**
+  budget (see below); `account_key()` and `stash_account_email()` no longer exist.
 - `backend/app/routes_auth.py`: signup and login carry a per-account limit next to the
   per-address one, so credential stuffing against one account is capped at 10 attempts a
   minute no matter how many addresses or headers are used.
 - `backend/app/routes_leagues.py` + `backend/app/routes_predictions.py`: per-user limits on
   create/join/rename/delete/leave/transfer and on create/pick/resolve.
-- `backend/tests/test_m23_rate_limits.py`: 10 tests, including "rotating the forwarded
+- `backend/tests/test_m23_rate_limits.py`: 12 tests, including "rotating the forwarded
   header does not buy a new bucket" and "the account budget is not shared between accounts".
 - `backend/tests/conftest.py`: an autouse fixture empties the in-memory limiter between
   tests, so one test cannot spend the budget of the next.
@@ -267,10 +267,59 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
   (`index-Bwraoy5S.js`, 166.77 kB / gzip 52.80 kB), which proves the refactor changed no
   behaviour.
 
+### M25 — Account management + the M21–M24 review findings
+**New endpoints**
+- `backend/app/routes_auth.py`: `POST /api/auth/change-password` (current password +
+  new password; bumps `token_version`, revokes every refresh token, closes the user's
+  websockets, returns a new token pair) and `POST /api/auth/delete-account` (password only;
+  the user row is locked `FOR UPDATE`, leagues the user owns that still have other members
+  are refused with 409, the user's open predictions are voided, their picks are removed and
+  the user is deleted).
+- `backend/app/schemas.py`: `PasswordChange`, `AccountDelete`, and `PredictionOut.creator_id`
+  is now `int | None`.
+- `backend/app/models.py`: `Prediction.creator_id` is nullable with `ON DELETE SET NULL`, so
+  a prediction survives the creator's account (other members' picks keep counting) and
+  nobody owns it any more — nobody can resolve it.
+- `backend/migrations/migrate_v25_creator_set_null.py`: idempotent, PostgreSQL-specific,
+  discovers the foreign-key name through `pg_constraint`; prints what it changed and is
+  safe to run twice.
+
+**Review findings that were fixed**
+- *MAJOR 1* — the rotated-`X-Forwarded-For` tests passed for the wrong reason: the
+  assertions ran before the request was made. They now wait for the response and are
+  wrapped in `ProxyHeadersMiddleware`, like uvicorn does in production.
+- *MAJOR 2* — the per-account login limit counted **every** attempt, so ten successful
+  logins locked a legitimate user out of their own account (a shared address, a mistyped
+  password, a bot guessing one account). The limit now counts only *failures*:
+  `rate_limit.note_failed_attempt(email, kind)` spends a budget of 10 login / 5 signup
+  failures a minute, a correct password always gets in, and an unknown email is charged
+  exactly like a known one (no account-enumeration side channel).
+- *MINOR 3* — a websocket that timed out or errored on send was left in the manager;
+  `ws.py` now drops it.
+- *MINOR 4* — leaving a league and transferring it at the same time could leave the league
+  owned by somebody who is not a member. Both now take a row lock (`FOR UPDATE`) first.
+- *MINOR 5* — the "broadcast from a plain thread does not raise" test could not fail (the
+  helper swallows every error). It now asserts that the message reaches a connected client.
+- *NIT 6* — the pick POST in the broadcast test was never asserted; it now checks `201`.
+- *NIT 7* — a failed member load left the previous member list on screen; it is cleared.
+- *NIT 8* — the catch-all route in the frontend tests answered unmocked POSTs with a league
+  list; it is now GET-only, so an unmocked POST fails the test loudly.
+- The websocket handshake now checks the token's `ver` claim against `user.token_version`
+  and that the user still exists, and `close_user_nowait()` closes a user's sockets when
+  the password changes or the account is deleted.
+
+**Frontend**
+- `frontend/src/App.jsx`: an **Account** view (change password; delete account with the
+  nickname typed to confirm and the blocking leagues listed), a `void` badge and banner for
+  voided predictions, and the stale-member-list fix.
+- `frontend/src/Account.test.jsx` (9 tests) and two new cases in
+  `frontend/src/LeagueView.test.jsx` (void badge, prediction without a creator).
+
 ### Verification
 - `python3 -m pytest tests -q` (from `backend/`, against a scratch PostgreSQL 16 instance)
-  → **92 passed** (61 after M20 + 15 M21 + 6 M22 + 10 M23). Neon was not touched.
-- `npm test` (in `frontend/`) → **35 passed** (4 files, ~1.2s, no warnings).
+  → **121 passed** (92 after M24 + 4 M21 races + 19 M25 account + 3 M25 migration +
+  2 M22 + 1 M23). Neon was not touched.
+- `npm test` (in `frontend/`) → **46 passed** (5 files, ~1.5s, no warnings).
 - Mutation check on the new frontend tests: breaking the owner-badge condition fails 2
   tests; posting the wrong owner id fails the transfer test with
   "expected { new_owner_id: +0 } to deeply equal { new_owner_id: 2 }". The tests are not
