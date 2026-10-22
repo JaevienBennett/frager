@@ -120,6 +120,7 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 - WS connection manager is in-process (single-instance hosting assumed).
 - No debouncing / list virtualization (fine at current scale).
 - No frontend test infrastructure (the frontend is only covered by `npm run build`).
+  Scheduled as **M24** (Vitest + Testing Library, prompt in PROMPTS.md).
 - No password-change endpoint and no account-deletion endpoint.
 - Refresh tokens still live in `localStorage` (an httpOnly cookie would be safer against XSS).
 - Rate limit counters live in process memory, so a multi-instance deployment would count

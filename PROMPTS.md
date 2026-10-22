@@ -4,6 +4,115 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
+## Milestone 24 — Frontend test infrastructure (Vitest) + first UI tests
+
+```
+TITLE: Milestone 24 — Frontend test infrastructure (Vitest) + first UI tests
+
+CONTEXT
+The React app has never had a test runner. Everything in frontend/ has only ever been
+checked by `npm run build`, which proves it compiles and nothing else. M21-M23 (ownership
+transfer, working websocket broadcasts, unspoofable rate limits) were all backend bugs,
+but the UI around them - the transfer modal, the owner badge, the league_updated
+websocket handling - is still completely untested. The next bug will probably be a UI
+bug. Give the frontend a test harness and write the first tests over the paths that
+just changed.
+
+GOAL
+Stand up Vitest + Testing Library in frontend/ and write the first meaningful tests:
+the pure helpers, the API helper's error/retry behaviour, and the ownership-transfer UI
+that shipped in M21. No behaviour changes to the app itself.
+
+CONSTRAINTS (must follow)
+- Dev dependencies only. Nothing new in `dependencies`. The production bundle must not grow.
+- NO behaviour change to the app. This milestone adds a test harness, not features.
+- Do not rewrite App.jsx. It is one 1400-line file that works. Only move code out of it
+  when moving it is required for testability, and then move it verbatim.
+- Keep every existing data-testid exactly as it is. The tests rely on them.
+- Tests must never touch the network. No test may call the real backend.
+- No backend changes.
+- Do not start long-running servers
+- Shared checkout rules as specified (do not switch branches, do not commit, do not push)
+
+TOOLING
+1. frontend/package.json: add devDependencies `vitest`, `jsdom`, `@testing-library/react`,
+   `@testing-library/user-event`, `@testing-library/jest-dom` (versions compatible with
+   the existing Vite 5 / React 18). Add scripts:
+     "test": "vitest run"
+     "test:watch": "vitest"
+2. frontend/vite.config.js: add a `test` block to the existing defineConfig call:
+   environment 'jsdom', globals true, setupFiles './src/test/setup.js'.
+   Vitest reads the Vite config, so do not add a second config file unless you must.
+3. frontend/src/test/setup.js:
+   - import '@testing-library/jest-dom/vitest'
+   - stub global.fetch with vi.fn() so no test can reach the network
+   - stub global.WebSocket with a fake class: it records its instances, exposes send()
+     and close(), and lets a test push an incoming message (call the instance's
+     onmessage handler) - the app opens a socket in LeagueView and must be testable
+   - stub matchMedia if anything needs it
+4. frontend/src/test/helpers.js (optional but recommended): small helpers to build a
+   fake Response ({ok, status, json: async () => body}), to route mocked fetch calls by
+   URL, and to make the fake WebSocket deliver a message.
+
+EXTRACTING FOR TESTABILITY (behaviour-preserving)
+5. Move these module-private helpers out of App.jsx into frontend/src/lib/ and export
+   them there. Move the code VERBATIM - same names, same behaviour, same constants:
+     - fetchJson, fetchJsonWithRetry, NETWORK_ERROR, WAKING_UP, REQUEST_TIMEOUT_MS,
+       getRefreshToken, storeSession, clearSession, isAuthAttempt  -> src/lib/api.js
+     - parseStake, pickErrorMessage, findMyPick                    -> src/lib/format.js
+   App.jsx imports them from there instead of defining them. Nothing else about App.jsx
+   changes. If you find a helper that is genuinely awkward to move, leave it and test it
+   through the component instead - do not rewrite it.
+6. Export the two sub-components so they can be rendered directly in tests:
+   `export function Leagues(...)` and `export function LeagueView(...)`.
+   This is a one-word change; do not change their props or behaviour.
+
+FIRST TESTS (frontend/src/**/*.test.js)
+7. src/lib/format.test.js - parseStake: '' -> 0, '5' -> 5, ' 7 ' -> 7, '2.5' -> rejected,
+   junk -> rejected, values above 1000000 -> rejected. pickErrorMessage and findMyPick.
+8. src/lib/api.test.js - fetchJson:
+   - a non-OK response throws an Error whose message is the backend's `detail` string
+   - a network failure throws the friendly NETWORK_ERROR message (never 'Failed to fetch')
+   - a 401 with a stored refresh token triggers one refresh + one retry, and the retry
+     carries the new Authorization header
+   - a 401 without a refresh token does not retry
+9. src/LeagueView.test.jsx - render LeagueView with a mocked fetch and a fake user:
+   - the "Transfer ownership" button (data-testid="transfer-league") is shown to the
+     owner and not to a non-owner
+   - clicking it opens data-testid="transfer-modal" and lists the members that
+     GET /api/leagues/{id}/members returned
+   - selecting a member enables data-testid="confirm-transfer"; clicking it POSTs to
+     /api/leagues/{id}/transfer with body {new_owner_id: <the selected id>}
+   - the backend's error detail (e.g. "Only the league owner can transfer ownership")
+     is shown in the modal instead of being swallowed
+   - data-testid="owner-badge" is rendered next to the owner's nickname in the
+     leaderboard, and NOT next to another member's nickname
+   - a league_updated websocket message with a new owner_id moves the owner badge to the
+     new owner (this is the M21/M22 frontend path - drive it through the fake WebSocket
+     from setup.js, not by calling the handler directly)
+10. src/App.test.jsx - one small test on the auth screen: a failed signup shows the
+    backend's error message to the user.
+
+VERIFY
+- `cd frontend && npm test` -> all tests pass, and the run reports the test count
+- `cd frontend && npm run build` -> still OK, and the bundle is not meaningfully larger
+  than before (report the before/after size of the JS chunk)
+- `cd frontend && npx vitest run --coverage` is NOT required; skip coverage if the
+  plugin is not already installed
+- Confirm no test reaches the network: every fetch call in the suite is the mocked one
+
+REPORT BACK
+- Files created and changed
+- The test count and the exact `npm test` output
+- The before/after JS bundle size from `npm run build`
+- Explicitly confirm: no behaviour change to the app, no new runtime dependency, every
+  existing data-testid intact, no network access in tests
+
+RESULT (to fill in after implementing)
+```
+
+---
+
 ## Milestone 23 — Rate limits that cannot be walked around (DONE)
 
 ```
