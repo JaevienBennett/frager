@@ -1,13 +1,13 @@
 # Frager Audit Report (M0–M14)
 
-Date: 2026-10-20 (audit) · updated 2026-10-21 (after M15–M19 fixes)
+Date: 2026-10-20 (audit) · updated 2026-10-21 (after M15–M19 fixes) · 2026-10-21 (after M20–M23 fixes)
 Repo: /Users/og.jae/projects/frager (main)
 Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt pinned), Render/Vercel
 
 > Status legend: **FIXED (M##)** = addressed in a later milestone, see [Implemented Fixes](#implemented-fixes).
 > The findings below are kept as the original audit record, with resolution notes added.
 
-## 1) WebSockets / Real-time — FIXED (M16)
+## 1) WebSockets / Real-time — FIXED (M16, broadcast fixed M22)
 - **Spec says:** "Real-time: WebSockets (FastAPI)", v1 includes "Leaderboard updates live (real-time)".
 - **Current state:** No WebSocket endpoints, no WS client in frontend. All updates use REST + manual refetches (after pick/resolve/create). 
 - **Evidence:** `backend/app/main.py` has no `websockets` imports/routers; `frontend/src/App.jsx` uses `fetchJson`/`fetchJsonWithRetry` only.
@@ -17,6 +17,11 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
   `GET /ws/leagues/{league_id}` in `backend/app/main.py` (JWT via `?token=`, membership
   required), events broadcast on create/pick/resolve, and a frontend WS client with
   exponential-backoff reconnect plus HTTP fallback.
+- **Correction (M22):** the M16 broadcasts never reached anybody. Every endpoint that
+  broadcasts is a `def` function, so FastAPI runs it in a worker thread; `asyncio.create_task`
+  has no running event loop there and raised `RuntimeError`, which the `except Exception: pass`
+  around it swallowed. Live updates had therefore never worked. Fixed in M22 by capturing the
+  app's event loop at startup and handing the broadcast back to it.
 
 ## 2) API Robustness
 - **Auth:** All protected routes use `get_current_user`. `routes_leagues`/`routes_predictions` enforce membership. **OK**.
@@ -52,7 +57,7 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 - **Invite codes:** `secrets.token_urlsafe(6)`, stored unique. **OK**.
 - **Join flow:** 404 unknown, 409 duplicate. Owner auto-member. **OK**.
 - **Membership checks:** Used everywhere. **OK**.
-- **Management:** No rename/delete/leave endpoints; no shareable invite link (v1 gap). — **FIXED (M19):** `PATCH`/`DELETE /api/leagues/{id}` (owner-only) and `POST /api/leagues/{id}/leave` (members; owner gets 409); frontend adds rename/delete/leave controls plus a `/?join=CODE` invite link. Deletes rely on the M18 cascades.
+- **Management:** No rename/delete/leave endpoints; no shareable invite link (v1 gap). — **FIXED (M19):** `PATCH`/`DELETE /api/leagues/{id}` (owner-only) and `POST /api/leagues/{id}/leave` (members; owner gets 409); frontend adds rename/delete/leave controls plus a `/?join=CODE` invite link. Deletes rely on the M18 cascades. — **FIXED (M21):** `POST /api/leagues/{id}/transfer` hands the league to another member, so an owner is no longer stuck (they stay a member and can then leave).
 
 ## 7) Auth
 - **Tokens:** JWT (python-jose), bcrypt via passlib (pinned 4.0.1). **OK**.
@@ -80,7 +85,7 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 ## 11) Security
 - **Secrets:** .env gitignored, .env.example provided. **OK**.
 - **SQL injection:** SQLAlchemy ORM used throughout. **OK**.
-- **Rate limiting:** None. **MED** for production (especially auth endpoints). — **FIXED (M17):** `slowapi` limiter; signup `5/minute`, login `10/minute`, 429 via `RateLimitExceeded` handler.
+- **Rate limiting:** None. **MED** for production (especially auth endpoints). — **FIXED (M17):** `slowapi` limiter; signup `5/minute`, login `10/minute`, 429 via `RateLimitExceeded` handler. — **FIXED (M23):** the M17 limiter keyed on `request.client.host`, which uvicorn rewrites from the *first* `X-Forwarded-For` entry — a header the caller writes. Behind Render (`FORWARDED_ALLOW_IPS=*`) that made every limit bypassable with a fresh header per request (proved in production: 13 different header values, no throttling). Limits now key on the account (email) and the signed-in user (JWT subject) first, and on the real client address second (`CF-Connecting-IP`, else the last `X-Forwarded-For` entry).
 - **CORS:** Configurable. **OK**.
 - **Headers:** No security headers middleware. **LOW**. — **FIXED (M17):** `nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection: 0`, `Referrer-Policy`, `Permissions-Policy`, `Strict-Transport-Security`.
 - **bcrypt pinned:** 4.0.1 in requirements. **OK**.
@@ -113,8 +118,14 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 
 ## Still open (not yet scheduled)
 - WS connection manager is in-process (single-instance hosting assumed).
-- No ownership transfer: an owner cannot leave a league (409) — they must delete it.
 - No debouncing / list virtualization (fine at current scale).
+- No frontend test infrastructure (the frontend is only covered by `npm run build`).
+- No password-change endpoint and no account-deletion endpoint.
+- Refresh tokens still live in `localStorage` (an httpOnly cookie would be safer against XSS).
+- Rate limit counters live in process memory, so a multi-instance deployment would count
+  per instance (Render currently runs one).
+- `users.id` → `leagues.owner_id` is `ON DELETE CASCADE`: deleting a user would delete the
+  leagues they own. There is no account-deletion endpoint yet, so this is latent.
 
 ## Implemented Fixes
 
@@ -186,11 +197,64 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 - `frontend/src/App.jsx`: stores access + refresh tokens, silently refreshes-and-retries on
   401, refreshes on boot, revokes on logout, and adds a "Log out all" action.
 
+### M21 — League ownership transfer
+- `backend/app/routes_leagues.py`: `GET /api/leagues/{id}/members` (member-gated list of
+  `user_id`, `nickname`, `is_owner`; no emails) and `POST /api/leagues/{id}/transfer`
+  (`{new_owner_id}`). Only the owner may transfer (403), the target must be a member (404),
+  transferring to yourself is a 400, and the update is a conditional
+  `UPDATE ... WHERE id = :id AND owner_id = :caller` so two racing owners cannot overwrite
+  each other (409 "Ownership changed; reload and try again").
+- The former owner stays a member and may then leave; the new owner inherits the
+  "cannot leave an owned league" rule, whose message now points at transferring
+  ("Owner cannot leave; transfer ownership or delete the league instead").
+- `backend/app/schemas.py`: `LeagueMemberOut`, `TransferOwnership`.
+- `backend/tests/test_m21_ownership_transfer.py`: 15 tests (member list, transfer, permissions,
+  self-transfer, race guard, old owner may leave, new owner may not, league list refresh).
+- `frontend/src/App.jsx` + `styles.css`: "Transfer ownership" button, member picker modal,
+  an "Owner" badge in the leaderboard, and a `league_updated` websocket event so other
+  members see the new owner.
+
+### M22 — Websocket broadcasts that actually arrive
+- `backend/app/ws.py`: `broadcast_nowait()` helper. It schedules the broadcast on the event
+  loop captured at startup (`set_event_loop`), on the current loop when called from async
+  code, and falls back to `anyio.from_thread.run` when no loop was captured. Each socket
+  send has a 5 second timeout and dead sockets are dropped with a log line instead of
+  `except Exception: pass`.
+- `backend/app/main.py`: lifespan hook captures the running loop at startup and clears it
+  on shutdown.
+- `backend/app/routes_predictions.py`: the six `asyncio.create_task(ws.manager.broadcast(...))`
+  call sites (which raised `RuntimeError: no running event loop` and were swallowed) now call
+  `ws.broadcast_nowait(...)`.
+- `backend/app/routes_leagues.py`: ownership transfers broadcast `league_updated`.
+- `backend/tests/test_m22_ws_broadcast.py`: 6 tests — a pick and a prediction created over
+  HTTP arrive on an open websocket, no "coroutine was never awaited" warning is raised, and
+  strangers/bad tokens are still refused.
+
+### M23 — Rate limits that cannot be walked around
+- `backend/app/rate_limit.py`: rewritten. `client_ip()` returns the caller's address
+  (`CF-Connecting-IP` — Cloudflare overwrites it — else the last `X-Forwarded-For` entry,
+  else the socket address), `account_key()` keys on the email of the account being used and
+  `user_key()` on the subject of the access token. `stash_account_email()` stores the email
+  on `request.state` in a dependency, which FastAPI resolves before the limit is checked.
+- `backend/app/routes_auth.py`: signup and login carry a per-account limit next to the
+  per-address one, so credential stuffing against one account is capped at 10 attempts a
+  minute no matter how many addresses or headers are used.
+- `backend/app/routes_leagues.py` + `backend/app/routes_predictions.py`: per-user limits on
+  create/join/rename/delete/leave/transfer and on create/pick/resolve.
+- `backend/tests/test_m23_rate_limits.py`: 10 tests, including "rotating the forwarded
+  header does not buy a new bucket" and "the account budget is not shared between accounts".
+- `backend/tests/conftest.py`: an autouse fixture empties the in-memory limiter between
+  tests, so one test cannot spend the budget of the next.
+
 ### Verification
 - `python3 -m pytest tests -q` (from `backend/`, against a scratch PostgreSQL 16 instance)
-  → **61 passed** (45 pre-existing + 16 M20). Neon was not touched.
+  → **92 passed** (61 after M20 + 15 M21 + 6 M22 + 10 M23). Neon was not touched.
 - `npm run build` (in `frontend/`) → **build succeeded**.
 - `python3 -c "import app.main"` → imports cleanly.
+- Live check against a local uvicorn with `FORWARDED_ALLOW_IPS=*` (the Render setting): a
+  login with a rotating `X-Forwarded-For` is refused on the 11th attempt, and the same
+  account is still capped at 10 attempts a minute even when the address and every header
+  are rotated.
 - `migrate_v20_sessions` run twice on a legacy schema → changes applied, then 0 change(s);
   also applied to Neon (4 changes, then 0 on a repeat run).
 - Production smoke test after the M20 deploy: signup → `me` → refresh → replay → logout-all

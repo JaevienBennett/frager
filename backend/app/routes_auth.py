@@ -72,7 +72,13 @@ def _revoke_active_refresh_tokens(
 
 @router.post("/signup", response_model=Token, status_code=status.HTTP_201_CREATED)
 @rate_limit.limiter.limit("5/minute")
-def signup(request: Request, body: SignupRequest, db: Session = Depends(get_db)):
+@rate_limit.limiter.limit("5/minute", key_func=rate_limit.account_key)
+def signup(
+    request: Request,
+    body: SignupRequest,
+    db: Session = Depends(get_db),
+    _account: None = Depends(rate_limit.stash_account_email),
+):
     existing = db.query(User).filter(User.email == body.email).first()
     if existing is not None:
         raise HTTPException(
@@ -98,7 +104,13 @@ def signup(request: Request, body: SignupRequest, db: Session = Depends(get_db))
 
 @router.post("/login", response_model=Token)
 @rate_limit.limiter.limit("10/minute")
-def login(request: Request, body: Credentials, db: Session = Depends(get_db)):
+@rate_limit.limiter.limit("10/minute", key_func=rate_limit.account_key)
+def login(
+    request: Request,
+    body: Credentials,
+    db: Session = Depends(get_db),
+    _account: None = Depends(rate_limit.stash_account_email),
+):
     user = db.query(User).filter(User.email == body.email).first()
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(

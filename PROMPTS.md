@@ -4,6 +4,133 @@ Hand these to a Cloudroom local thread running on `~/projects/frager` (OpenCode)
 
 ---
 
+## Milestone 23 — Rate limits that cannot be walked around (DONE)
+
+```
+TITLE: Milestone 23 — Rate limits that cannot be walked around
+
+GOAL
+The slowapi limiter keyed on request.client.host. Behind Render, uvicorn rewrites that
+field from the FIRST X-Forwarded-For entry (FORWARDED_ALLOW_IPS=*), which the caller
+writes, so every limit could be dodged with a fresh header per request. Prove it, then
+key the limits on things the caller cannot change.
+
+CONSTRAINTS (must follow)
+- Per-account (email) and per-user (JWT subject) keys are the primary defence
+- The client address is a secondary layer only, and must not come from the first
+  X-Forwarded-For entry
+- Signup/login keep their per-address limit as well
+- The write endpoints get per-user limits; slowapi needs a `request` argument on
+  every limited endpoint
+- No schema change, no migration
+- Do not start long-running servers
+- Shared checkout rules as specified
+
+BACKEND
+1. rate_limit.py: client_ip() (CF-Connecting-IP, else the last X-Forwarded-For entry,
+   else the socket address), account_key(), user_key(), stash_account_email() dependency
+2. routes_auth.py: signup/login get a per-account limit; the email is stashed on
+   request.state by a dependency (FastAPI resolves dependencies before the limit check)
+3. routes_leagues.py + routes_predictions.py: per-user limits on
+   create/join/rename/delete/leave/transfer and create/pick/resolve; add `request: Request`
+4. tests/test_m23_rate_limits.py: rotating the forwarded header does not buy a new
+   bucket; the account budget is not shared between accounts
+5. tests/conftest.py: autouse fixture that empties the in-memory limiter between tests
+
+VERIFY
+- `cd backend && DATABASE_URL=<scratch> python3 -m pytest tests -q` -> 92 passed
+- live uvicorn with FORWARDED_ALLOW_IPS='*': 11th login for one account -> 429 even with
+  rotating CF-Connecting-IP and X-Forwarded-For
+- `cd frontend && npm run build` -> OK
+
+RESULT (implemented)
+- 92 tests pass, build passes. The old behaviour (a new bucket per header value) was
+  reproduced against production before the fix.
+```
+
+---
+
+## Milestone 22 — Websocket broadcasts that actually arrive (DONE)
+
+```
+TITLE: Milestone 22 — Websocket broadcasts that actually arrive
+
+GOAL
+Every broadcast call site was `asyncio.create_task(ws.manager.broadcast(...))` inside a
+sync endpoint. FastAPI runs sync endpoints in a worker thread with no running event
+loop, so the call raised RuntimeError("no running event loop") and was swallowed by
+`except Exception: pass`. Live updates had never worked. Fix the hand-off from the
+worker thread to the loop that owns the sockets.
+
+CONSTRAINTS (must follow)
+- Capture the application's event loop at startup (lifespan) and use
+  asyncio.run_coroutine_threadsafe from worker threads
+- Fall back to anyio.from_thread.run when no loop was captured
+- Give every socket send a timeout and log failures; never swallow them silently
+- No schema change, no migration
+- Do not start long-running servers
+- Shared checkout rules as specified
+
+BACKEND
+1. ws.py: broadcast_nowait() helper + set_event_loop(); per-send timeout; drop dead
+   sockets with a log line
+2. main.py: lifespan hook that captures the running loop
+3. routes_predictions.py: replace the six asyncio.create_task call sites
+4. tests/test_m22_ws_broadcast.py: a pick and a prediction created over HTTP arrive on an
+   open websocket; no "coroutine was never awaited" warning
+
+VERIFY
+- `cd backend && DATABASE_URL=<scratch> python3 -m pytest tests -q` -> 92 passed
+- `cd frontend && npm run build` -> OK
+
+RESULT (implemented)
+- 92 tests pass, build passes. The old behaviour (RuntimeError swallowed) was reproduced
+  before the fix.
+```
+
+---
+
+## Milestone 21 — League ownership transfer (DONE)
+
+```
+TITLE: Milestone 21 — League ownership transfer
+
+GOAL
+An owner who wanted out was stuck: leaving an owned league is refused (409) and the only
+other option was deleting the league. Let the owner hand the league to another member.
+
+CONSTRAINTS (must follow)
+- Only the current owner may transfer; the target must already be a member
+- The update must be race safe: two owners cannot overwrite each other
+- The former owner stays a member and may then leave; the new owner inherits the
+  "cannot leave" rule
+- No schema change, no migration
+- Do not start long-running servers
+- Shared checkout rules as specified
+
+BACKEND
+1. schemas.py: LeagueMemberOut, TransferOwnership
+2. routes_leagues.py: GET /api/leagues/{id}/members (member gated, no emails),
+   POST /api/leagues/{id}/transfer with 403/404/400/409 semantics and a conditional
+   UPDATE ... WHERE id = :id AND owner_id = :caller
+3. leave-league message: "Owner cannot leave; transfer ownership or delete the league instead"
+4. tests/test_m21_ownership_transfer.py
+
+FRONTEND
+5. App.jsx: "Transfer ownership" button + member picker modal + owner badge in the
+   leaderboard; handle the league_updated websocket event
+
+VERIFY
+- `cd backend && DATABASE_URL=<scratch> python3 -m pytest tests -q` -> 92 passed
+- `cd frontend && npm run build` -> OK
+
+RESULT (implemented)
+- 92 tests pass, build passes. The transfer flow was also smoke tested against a local
+  uvicorn instance.
+```
+
+---
+
 ## Milestone 20 — Sessions: rotating refresh tokens + revocation (DONE)
 
 ```

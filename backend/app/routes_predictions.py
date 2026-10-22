@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
 from .membership import is_member, require_member
@@ -12,6 +12,7 @@ from .schemas import (
     PredictionOut,
     ResolveRequest,
 )
+from .rate_limit import limiter, user_key
 from .security import get_current_user, get_db
 from .services import espn_client
 from .services import sports_resolver
@@ -58,7 +59,9 @@ def prediction_out(prediction: Prediction) -> PredictionOut:
     response_model=PredictionOut,
     status_code=status.HTTP_201_CREATED,
 )
+@limiter.limit("20/minute", key_func=user_key)
 def create_prediction(
+    request: Request,
     league_id: int,
     body: PredictionCreate,
     user: User = Depends(get_current_user),
@@ -103,11 +106,14 @@ def create_prediction(
     db.add(prediction)
     db.commit()
     db.refresh(prediction)
-    try:
-        import asyncio
-        asyncio.create_task(ws.manager.broadcast(league_id, {"type": "prediction_created", "league_id": league_id, "prediction_id": prediction.id}))
-    except Exception:
-        pass
+    ws.broadcast_nowait(
+        league_id,
+        {
+            "type": "prediction_created",
+            "league_id": league_id,
+            "prediction_id": prediction.id,
+        },
+    )
     return prediction_out(prediction)
 
 
@@ -126,17 +132,26 @@ def list_predictions(
     )
     for p in predictions:
         if sports_resolver.try_auto_resolve(p, db):
-            try:
-                import asyncio
-                asyncio.create_task(ws.manager.broadcast(p.league_id, {"type": "prediction_resolved", "league_id": p.league_id, "prediction_id": p.id, "outcome": p.resolved_outcome}))
-                asyncio.create_task(ws.manager.broadcast(p.league_id, {"type": "leaderboard_updated", "league_id": p.league_id}))
-            except Exception:
-                pass
+            ws.broadcast_nowait(
+                p.league_id,
+                {
+                    "type": "prediction_resolved",
+                    "league_id": p.league_id,
+                    "prediction_id": p.id,
+                    "outcome": p.resolved_outcome,
+                },
+            )
+            ws.broadcast_nowait(
+                p.league_id,
+                {"type": "leaderboard_updated", "league_id": p.league_id},
+            )
     return [prediction_out(p) for p in predictions]
 
 
 @router.post("/predictions/{prediction_id}/pick", response_model=PickOut)
+@limiter.limit("60/minute", key_func=user_key)
 def make_pick(
+    request: Request,
     prediction_id: int,
     body: PickCreate,
     response: Response,
@@ -173,12 +188,18 @@ def make_pick(
         response.status_code = status.HTTP_201_CREATED
     db.commit()
     db.refresh(pick)
-    try:
-        import asyncio
-        asyncio.create_task(ws.manager.broadcast(prediction.league_id, {"type": "pick_updated", "league_id": prediction.league_id, "prediction_id": prediction.id}))
-        asyncio.create_task(ws.manager.broadcast(prediction.league_id, {"type": "leaderboard_updated", "league_id": prediction.league_id}))
-    except Exception:
-        pass
+    ws.broadcast_nowait(
+        prediction.league_id,
+        {
+            "type": "pick_updated",
+            "league_id": prediction.league_id,
+            "prediction_id": prediction.id,
+        },
+    )
+    ws.broadcast_nowait(
+        prediction.league_id,
+        {"type": "leaderboard_updated", "league_id": prediction.league_id},
+    )
     return pick_out(pick, user.nickname)
 
 
@@ -194,12 +215,19 @@ def get_prediction(
             status_code=status.HTTP_404_NOT_FOUND, detail="Prediction not found"
         )
     if sports_resolver.try_auto_resolve(prediction, db):
-        try:
-            import asyncio
-            asyncio.create_task(ws.manager.broadcast(prediction.league_id, {"type": "prediction_resolved", "league_id": prediction.league_id, "prediction_id": prediction.id, "outcome": prediction.resolved_outcome}))
-            asyncio.create_task(ws.manager.broadcast(prediction.league_id, {"type": "leaderboard_updated", "league_id": prediction.league_id}))
-        except Exception:
-            pass
+        ws.broadcast_nowait(
+            prediction.league_id,
+            {
+                "type": "prediction_resolved",
+                "league_id": prediction.league_id,
+                "prediction_id": prediction.id,
+                "outcome": prediction.resolved_outcome,
+            },
+        )
+        ws.broadcast_nowait(
+            prediction.league_id,
+            {"type": "leaderboard_updated", "league_id": prediction.league_id},
+        )
     caller_has_pick = any(p.user_id == user.id for p in prediction.picks)
     picks_visible = caller_has_pick or prediction.status == "resolved"
     detail = prediction_out(prediction).model_dump()
@@ -229,7 +257,9 @@ def get_prediction(
 
 
 @router.post("/predictions/{prediction_id}/resolve", response_model=PredictionOut)
+@limiter.limit("30/minute", key_func=user_key)
 def resolve_prediction(
+    request: Request,
     prediction_id: int,
     body: ResolveRequest,
     user: User = Depends(get_current_user),
@@ -256,12 +286,19 @@ def resolve_prediction(
     prediction.resolution_source = "manual"
     db.commit()
     db.refresh(prediction)
-    try:
-        import asyncio
-        asyncio.create_task(ws.manager.broadcast(prediction.league_id, {"type": "prediction_resolved", "league_id": prediction.league_id, "prediction_id": prediction.id, "outcome": body.outcome}))
-        asyncio.create_task(ws.manager.broadcast(prediction.league_id, {"type": "leaderboard_updated", "league_id": prediction.league_id}))
-    except Exception:
-        pass
+    ws.broadcast_nowait(
+        prediction.league_id,
+        {
+            "type": "prediction_resolved",
+            "league_id": prediction.league_id,
+            "prediction_id": prediction.id,
+            "outcome": body.outcome,
+        },
+    )
+    ws.broadcast_nowait(
+        prediction.league_id,
+        {"type": "leaderboard_updated", "league_id": prediction.league_id},
+    )
     return prediction_out(prediction)
 
 

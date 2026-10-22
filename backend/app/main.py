@@ -1,4 +1,6 @@
+import asyncio
 import os
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect
@@ -17,7 +19,23 @@ from .security import decode_access_token
 
 load_dotenv()
 
-app = FastAPI(title="Frager")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Remember the event loop so sync endpoints can push websocket updates.
+
+    FastAPI runs `def` endpoints in a worker thread, where `asyncio.create_task`
+    raises "no running event loop". Capturing the loop here lets those
+    endpoints hand the broadcast back to the loop that owns the websockets.
+    """
+    ws_module.set_event_loop(asyncio.get_running_loop())
+    try:
+        yield
+    finally:
+        ws_module.set_event_loop(None)
+
+
+app = FastAPI(title="Frager", lifespan=lifespan)
 app.state.limiter = limiter
 
 

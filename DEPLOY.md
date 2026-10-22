@@ -49,6 +49,8 @@ to the current Neon database. Run `migrate_v20_sessions` once on Neon to add
 > 1. run the migration against Neon,
 > 2. confirm it is idempotent by running it a second time (expect 0 changes),
 > 3. only then push the code that depends on it.
+>
+> **M21–M23 change no tables**, so no migration is needed for them.
 
 ## 2. Backend on Render
 
@@ -88,6 +90,30 @@ dashboard steps are:
   (no trailing slash — the app calls `${VITE_API_URL}/api/...`).
 - Open the Vercel URL: you should see `Backend: ok`. Sign up, create a league,
   and you're live.
+
+## 5. Deploy order for the frontend
+
+The frontend calls `GET /api/leagues/{id}/members` for the ownership-transfer picker.
+That endpoint only exists from M21 onwards, so **deploy the backend before the
+frontend**. If the frontend goes first, the transfer dialog reports "Not found" until the
+backend is updated; everything else keeps working.
+
+## 6. Rate limiting and proxies in production
+
+The API sits behind Cloudflare → Render → uvicorn.
+
+- Render sets `FORWARDED_ALLOW_IPS=*` for Python services, so uvicorn trusts every
+  proxy and rewrites `request.client` from the **first** `X-Forwarded-For` entry — an
+  entry the caller writes. Frager therefore does **not** key its rate limits on
+  `request.client.host`.
+- Limits key on the account (email) and on the signed-in user (JWT subject) first; the
+  caller's address is only used as a secondary layer and is taken from
+  `CF-Connecting-IP` (which Cloudflare overwrites) or from the last `X-Forwarded-For`
+  entry (which Render appends).
+- The counters live in process memory, so they are per instance. Render currently runs a
+  single instance; scaling out would need a shared store (Redis).
+- After deploying, verify with two probes: repeated logins for one account must return
+  `429` on the 11th attempt even when `X-Forwarded-For` changes every time.
 
 ## Local development (unchanged)
 

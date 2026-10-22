@@ -23,6 +23,8 @@ deployed end to end.
   invite code.
 - **Manage** — owners can rename or delete a league; members can leave. Deleting a league
   cascades its memberships, predictions, and picks.
+- **Hand over** — an owner can transfer a league to another member; they stay a member
+  afterwards and can then leave, so nobody gets stuck owning a league they are done with.
 - **Predictions** — anyone in a league posts a yes/no question.
 - **Picks** — members pick a side and optionally stake points.
 - **Reveal** — you can only see everyone else's picks *after* you've made your own
@@ -78,7 +80,7 @@ frager/
 │   │   ├── schemas.py           Pydantic request/response models
 │   │   ├── security.py          hashing, JWT, get_current_user, get_db
 │   │   ├── membership.py        is_member / require_member helpers
-│   │   ├── rate_limit.py        slowapi limiter (auth endpoints)
+│   │   ├── rate_limit.py        slowapi limiter (per-account / per-user / per-IP keys)
 │   │   ├── ws.py                WebSocket connection manager (per league)
 │   │   ├── routes_auth.py       /api/auth/*
 │   │   ├── routes_leagues.py    /api/leagues/*
@@ -92,7 +94,9 @@ frager/
 │   │                            migrate_v20_sessions.py
 │   ├── tests/                   conftest.py, test_smoke_flows.py,
 │   │                            test_m14_auto_resolve.py, test_m18_validation.py,
-│   │                            test_m19_league_management.py, test_m20_sessions.py
+│   │                            test_m19_league_management.py, test_m20_sessions.py,
+│   │                            test_m21_ownership_transfer.py,
+│   │                            test_m22_ws_broadcast.py, test_m23_rate_limits.py
 │   ├── render.yaml
 │   └── requirements.txt
 └── frontend/
@@ -104,7 +108,9 @@ frager/
 ```bash
 cd backend
 pip install pytest httpx       # test runner + TestClient transport (if not installed)
-python -m pytest tests         # 61 tests: smoke flows, auto-resolve, validation, cascades, league management, sessions
+python -m pytest tests         # 92 tests: smoke flows, auto-resolve, validation, cascades,
+                                # league management, sessions, ownership transfer,
+                                # websocket broadcasts, rate limits
 ```
 
 ```bash
@@ -166,19 +172,24 @@ other users — only nicknames.
 | PATCH  | `/api/leagues/{id}`                      | `{name}`                 | 200 league (owner) | 403 non-owner, 404 non-member |
 | DELETE | `/api/leagues/{id}`                      | —                        | 200 `{"ok": true}` (owner; cascades) | 403 non-owner, 404 non-member |
 | POST   | `/api/leagues/{id}/leave`                | —                        | 200 `{"ok": true}` | 409 owner, 404 non-member |
+| GET    | `/api/leagues/{id}/members`              | —                        | 200 `[{user_id, nickname, is_owner}]` | 404 non-member |
+| POST   | `/api/leagues/{id}/transfer`             | `{new_owner_id}`         | 200 league (new owner) | 403 non-owner, 404 target not a member, 400 self-transfer, 409 ownership changed |
 | POST   | `/api/leagues/{id}/predictions`          | `{question, game_url?}`  | 201 prediction | 404 non-member, 400 bad game link |
 | GET    | `/api/leagues/{id}/predictions`          | —                        | 200 list w/ counts + stakes | 404 non-member |
 | POST   | `/api/predictions/{id}/pick`             | `{side, stake}`          | 201 new / 200 updated | 404, 409 resolved, 422 bad side/stake |
 | GET    | `/api/predictions/{id}`                  | —                        | 200 detail (picks gated by `picks_visible`) | 404 |
 | POST   | `/api/predictions/{id}/resolve`          | `{outcome}`              | 200 resolved | 404, 403 non-creator, 409 already resolved |
 | GET    | `/api/leagues/{id}/leaderboard`          | —                        | 200 members ranked (points/record/accuracy) | 404 non-member |
-| WS     | `/ws/leagues/{id}?token=<jwt>`           | —                        | events: `prediction_created`, `pick_updated`, `prediction_resolved`, `leaderboard_updated` | closed if token invalid or not a member |
+| WS     | `/ws/leagues/{id}?token=<jwt>`           | —                        | events: `prediction_created`, `pick_updated`, `prediction_resolved`, `leaderboard_updated`, `league_updated` | closed if token invalid or not a member |
 
 ## Notes
 
 - **Rate limits:** `POST /api/auth/signup` allows 5/minute, `POST /api/auth/login`
-  10/minute, `POST /api/auth/refresh` 60/minute, and the logout endpoints 30/minute per IP;
-  exceeding any returns `429`.
+  10/minute, `POST /api/auth/refresh` 60/minute, and the logout endpoints 30/minute;
+  exceeding any returns `429`. Signup and login are limited **per account** as well as per
+  address, so guessing one password is capped at 10 attempts a minute even from many
+  addresses and with forged forwarding headers. The write endpoints (create/join/rename/
+  delete/leave/transfer, create/pick/resolve) are limited per signed-in user.
 - **Sessions:** access tokens last `ACCESS_TOKEN_EXPIRE_MINUTES` (default 60); refresh tokens
   last `REFRESH_TOKEN_EXPIRE_DAYS` (default 30), are stored only as SHA-256 hashes, and rotate
   on every use. Replaying a rotated token after a 15-second grace window revokes every
@@ -189,8 +200,8 @@ other users — only nicknames.
 - **Input limits:** league names are 1–100 characters; prediction questions are 1–500
   (whitespace is trimmed). Validation is enforced on both the client and the server.
 - **League management:** only the owner can rename or delete a league; members can leave.
-  The owner cannot leave — deleting the league is the exit. Every league has a shareable
-  invite link (`/?join=CODE`) that pre-fills the join form.
+  The owner cannot leave — they transfer the league to another member or delete it. Every
+  league has a shareable invite link (`/?join=CODE`) that pre-fills the join form.
 - **Deleting data:** core foreign keys are `ON DELETE CASCADE`, so deleting a league (or a
   user) cleans up its memberships, predictions, and picks. Existing databases need
   `python -m migrations.migrate_v18_cascades` once — the delete endpoints require it (see

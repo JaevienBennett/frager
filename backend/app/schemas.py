@@ -79,6 +79,16 @@ class JoinRequest(BaseModel):
     invite_code: str
 
 
+class LeagueMemberOut(BaseModel):
+    user_id: int
+    nickname: str
+    is_owner: bool
+
+
+class TransferOwnership(BaseModel):
+    new_owner_id: int = Field(ge=1)
+
+
 class PredictionCreate(BaseModel):
     question: str
     game_url: str | None = None

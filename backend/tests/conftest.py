@@ -58,3 +58,25 @@ def db_session():
         yield session
     finally:
         session.close()
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limits():
+    """Start every test with an empty rate limit bucket.
+
+    The limiter keeps its counters in memory for the whole process, so without
+    this a test that signs up would spend the budget of the next one.
+    """
+    from app.rate_limit import limiter
+
+    def _clear():
+        storage = getattr(limiter.limiter, "storage", None)
+        for attribute in ("storage", "expirations", "locks"):
+            container = getattr(storage, attribute, None)
+            clear = getattr(container, "clear", None)
+            if callable(clear):
+                clear()
+
+    _clear()
+    yield
+    _clear()

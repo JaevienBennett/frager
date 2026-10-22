@@ -337,7 +337,7 @@ def test_owner_cannot_leave_league(client, owner):
 
     r = client.post(f"/api/leagues/{league['id']}/leave", headers=owner_headers)
     assert r.status_code == 409, r.text
-    assert r.json()["detail"] == "Owner cannot leave; delete the league instead"
+    assert r.json()["detail"] == "Owner cannot leave; transfer ownership or delete the league instead"
 
     db = SessionLocal()
     try:

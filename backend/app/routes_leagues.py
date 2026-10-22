@@ -1,12 +1,21 @@
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from .membership import is_member
 from .models import League, Membership, User
-from .schemas import JoinRequest, LeagueCreate, LeagueOut, LeagueUpdate
+from .rate_limit import limiter, user_key
+from .schemas import (
+    JoinRequest,
+    LeagueCreate,
+    LeagueMemberOut,
+    LeagueOut,
+    LeagueUpdate,
+    TransferOwnership,
+)
 from .security import get_current_user, get_db
+from . import ws
 
 router = APIRouter(prefix="/api/leagues", tags=["leagues"])
 
@@ -26,7 +35,9 @@ def league_out(db: Session, league: League) -> LeagueOut:
 
 
 @router.post("", response_model=LeagueOut, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute", key_func=user_key)
 def create_league(
+    request: Request,
     body: LeagueCreate,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -81,7 +92,9 @@ def get_league(
 
 
 @router.post("/join", response_model=LeagueOut)
+@limiter.limit("20/minute", key_func=user_key)
 def join_league(
+    request: Request,
     body: JoinRequest,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -108,7 +121,9 @@ def join_league(
 
 
 @router.post("/{league_id}/leave")
+@limiter.limit("30/minute", key_func=user_key)
 def leave_league(
+    request: Request,
     league_id: int,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -126,15 +141,107 @@ def leave_league(
     if league.owner_id == user.id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Owner cannot leave; delete the league instead",
+            detail="Owner cannot leave; transfer ownership or delete the league instead",
         )
     db.delete(membership)
     db.commit()
     return {"ok": True}
 
 
+@router.get("/{league_id}/members", response_model=list[LeagueMemberOut])
+def list_members(
+    league_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List the members of a league (no emails: only the pick list needs this)."""
+    league = db.get(League, league_id)
+    if league is None or not is_member(db, league_id, user.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="League not found")
+    members = (
+        db.query(User)
+        .join(Membership, Membership.user_id == User.id)
+        .filter(Membership.league_id == league_id)
+        .order_by(User.nickname)
+        .all()
+    )
+    return [
+        LeagueMemberOut(
+            user_id=member.id,
+            nickname=member.nickname,
+            is_owner=member.id == league.owner_id,
+        )
+        for member in members
+    ]
+
+
+@router.post("/{league_id}/transfer", response_model=LeagueOut)
+@limiter.limit("10/minute", key_func=user_key)
+def transfer_ownership(
+    request: Request,
+    league_id: int,
+    body: TransferOwnership,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Hand the league over to another member.
+
+    The former owner stays a member and may leave afterwards; the new owner
+    inherits the "cannot leave an owned league" rule.
+    """
+    league = db.get(League, league_id)
+    if league is None or not is_member(db, league_id, user.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="League not found")
+    if league.owner_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the league owner can transfer ownership",
+        )
+    if body.new_owner_id == user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You already own this league",
+        )
+    target = (
+        db.query(Membership)
+        .filter(
+            Membership.league_id == league_id,
+            Membership.user_id == body.new_owner_id,
+        )
+        .first()
+    )
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User is not a member of this league",
+        )
+
+    # Conditional update: if somebody else won the race, no row is updated and
+    # the caller is told to reload instead of silently overwriting them.
+    updated = (
+        db.query(League)
+        .filter(League.id == league_id, League.owner_id == user.id)
+        .update({League.owner_id: body.new_owner_id}, synchronize_session=False)
+    )
+    if updated != 1:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ownership changed; reload and try again",
+        )
+    db.commit()
+    db.refresh(league)
+    ws.broadcast_nowait(
+        league_id,
+        {"type": "league_updated", "league_id": league_id, "owner_id": body.new_owner_id},
+    )
+    return league_out(db, league)
+
+
 @router.patch("/{league_id}", response_model=LeagueOut)
+@limiter.limit("30/minute", key_func=user_key)
 def update_league(
+    request: Request,
     league_id: int,
     body: LeagueUpdate,
     user: User = Depends(get_current_user),
@@ -155,7 +262,9 @@ def update_league(
 
 
 @router.delete("/{league_id}")
+@limiter.limit("10/minute", key_func=user_key)
 def delete_league(
+    request: Request,
     league_id: int,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
