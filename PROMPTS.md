@@ -69,7 +69,9 @@ EXTRACTING FOR TESTABILITY (behaviour-preserving)
 
 FIRST TESTS (frontend/src/**/*.test.js)
 7. src/lib/format.test.js - parseStake: '' -> 0, '5' -> 5, ' 7 ' -> 7, '2.5' -> rejected,
-   junk -> rejected, values above 1000000 -> rejected. pickErrorMessage and findMyPick.
+   junk -> rejected, values above 1000000 -> clamped to 1000000 (the existing code clamps
+   with Math.min; assert the clamp, do not change the behaviour). pickErrorMessage and
+   findMyPick.
 8. src/lib/api.test.js - fetchJson:
    - a non-OK response throws an Error whose message is the backend's `detail` string
    - a network failure throws the friendly NETWORK_ERROR message (never 'Failed to fetch')
@@ -108,7 +110,27 @@ REPORT BACK
 - Explicitly confirm: no behaviour change to the app, no new runtime dependency, every
   existing data-testid intact, no network access in tests
 
-RESULT (to fill in after implementing)
+RESULT (implemented)
+- 35 tests pass in 4 files (~1.2s, no warnings): src/lib/format.test.js (13),
+  src/lib/api.test.js (11), src/LeagueView.test.jsx (8), src/App.test.jsx (3).
+- The production bundle is byte-identical to the pre-M24 build
+  (index-Bwraoy5S.js, 166.77 kB / gzip 52.80 kB; css index-CJ6PrGjg.css, 12.10 kB), which
+  is the strongest available proof that the refactor changed no behaviour.
+- `dependencies` is untouched (react/react-dom only); the five new packages are
+  devDependencies. `npm audit --omit=dev` -> 0 vulnerabilities.
+- App.jsx changed by 15 insertions / 147 deletions: the helpers moved verbatim into
+  src/lib/, and `Leagues`/`LeagueView` gained `export`. Every data-testid is unchanged.
+- No test can reach the network: fetch is globally mocked and an unmatched call fails the
+  test with "Test made an unmocked network call: ...".
+- Verified by mutation: breaking the owner-badge condition fails 2 tests, and posting the
+  wrong owner id fails the transfer test with "expected { new_owner_id: +0 } to deeply
+  equal { new_owner_id: 2 }".
+- Note: parseStake clamps above 1000000 rather than rejecting it. The milestone text said
+  "rejected"; the existing behaviour clamps and was deliberately left alone (no behaviour
+  change), and the test asserts the clamp. The prompt text above was corrected.
+- Open: `npm audit` reports 5 dev-toolchain advisories (esbuild/vite dev server, vite-node,
+  tinypool prototype pollution). All are dev-only and unreachable in the deployed app;
+  fixing them needs Vitest 5 / Vite 8, a breaking upgrade that was deliberately deferred.
 ```
 
 ---

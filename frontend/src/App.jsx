@@ -1,150 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-const TOKEN_KEY = 'frager_token'
-const REFRESH_KEY = 'frager_refresh'
-const REQUEST_TIMEOUT_MS = 60000
-const NETWORK_ERROR =
-  "Couldn't reach the server. It may be waking up — please try again in a moment."
-const WAKING_UP = 'Waking up the server…'
-
-let refreshPromise = null
-
-function getRefreshToken() {
-  return localStorage.getItem(REFRESH_KEY)
-}
-
-function storeSession(accessToken, refreshToken) {
-  localStorage.setItem(TOKEN_KEY, accessToken)
-  if (refreshToken) localStorage.setItem(REFRESH_KEY, refreshToken)
-  else localStorage.removeItem(REFRESH_KEY)
-  window.dispatchEvent(
-    new CustomEvent('frager:tokens', { detail: { token: accessToken } }),
-  )
-}
-
-function clearSession() {
-  localStorage.removeItem(TOKEN_KEY)
-  localStorage.removeItem(REFRESH_KEY)
-}
-
-function isAuthAttempt(url) {
-  return /\/api\/auth\/(login|signup|refresh)$/.test(url)
-}
-
-async function refreshSession() {
-  if (refreshPromise) return refreshPromise
-  refreshPromise = (async () => {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const refreshToken = getRefreshToken()
-      if (!refreshToken) throw new Error('No refresh token')
-      let res
-      try {
-        res = await fetch(`${API}/api/auth/refresh`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refresh_token: refreshToken }),
-        })
-      } catch {
-        throw new Error(NETWORK_ERROR)
-      }
-      if (res.ok) {
-        const data = await res.json()
-        storeSession(data.access_token, data.refresh_token)
-        return data.access_token
-      }
-      const current = getRefreshToken()
-      if (current && current !== refreshToken) {
-        // Another tab rotated the token while this request was in flight.
-        continue
-      }
-      clearSession()
-      window.dispatchEvent(new Event('frager:auth-expired'))
-      throw new Error('Session expired, please log in again.')
-    }
-    throw new Error('Session expired, please log in again.')
-  })().finally(() => {
-    refreshPromise = null
-  })
-  return refreshPromise
-}
-
-async function fetchJson(url, options = {}, retryAuth = true) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-  let res
-  try {
-    res = await fetch(url, { ...options, signal: controller.signal })
-  } catch {
-    throw new Error(NETWORK_ERROR)
-  } finally {
-    clearTimeout(timer)
-  }
-  if (
-    res.status === 401 &&
-    retryAuth &&
-    !isAuthAttempt(url) &&
-    getRefreshToken()
-  ) {
-    try {
-      const token = await refreshSession()
-      const headers = {
-        ...(options.headers || {}),
-        Authorization: `Bearer ${token}`,
-      }
-      return await fetchJson(url, { ...options, headers }, false)
-    } catch (err) {
-      if (err.message === NETWORK_ERROR) throw err
-    }
-  }
-  if (!res.ok) {
-    let detail = `Request failed (HTTP ${res.status})`
-    try {
-      const body = await res.json()
-      if (body && typeof body.detail === 'string') detail = body.detail
-    } catch {}
-    const error = new Error(detail)
-    error.status = res.status
-    throw error
-  }
-  return res.json()
-}
-
-async function fetchJsonWithRetry(url, options = {}, attempts = 3) {
-  let lastError
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    try {
-      return await fetchJson(url, options)
-    } catch (err) {
-      lastError = err
-      if (err.message !== NETWORK_ERROR || attempt === attempts - 1) throw err
-      await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)))
-    }
-  }
-  throw lastError
-}
-
-function parseStake(raw) {
-  const trimmed = String(raw ?? '').trim()
-  if (trimmed === '') return 0
-  if (!/^\d+$/.test(trimmed)) {
-    throw new Error('Stake must be a whole number of points (0 or more).')
-  }
-  return Math.min(Number(trimmed), 1000000)
-}
-
-function pickErrorMessage(err) {
-  if (err.status === 409) {
-    return "This prediction was already resolved — your pick wasn't saved."
-  }
-  const reason = err.message
-  return `Your pick was NOT saved: ${reason}${/[.!?]$/.test(reason) ? '' : '.'} Please try again.`
-}
-
-function findMyPick(detail, userId) {
-  if (!detail || !detail.picks_visible) return null
-  return detail.picks.find((pk) => pk.user_id === userId) || null
-}
+import {
+  API,
+  NETWORK_ERROR,
+  TOKEN_KEY,
+  WAKING_UP,
+  clearSession,
+  fetchJson,
+  fetchJsonWithRetry,
+  getRefreshToken,
+  refreshSession,
+  storeSession,
+} from './lib/api'
+import { findMyPick, parseStake, pickErrorMessage } from './lib/format'
 
 function Logo({ size = 26 }) {
   return (
@@ -402,7 +270,7 @@ export default function App() {
   )
 }
 
-function Leagues({ token, userId }) {
+export function Leagues({ token, userId }) {
   const [leagues, setLeagues] = useState([])
   const [loaded, setLoaded] = useState(false)
   const [name, setName] = useState('')
@@ -583,7 +451,7 @@ function Leagues({ token, userId }) {
   )
 }
 
-function LeagueView({ token, userId, league, onBack, onUpdated, onDeleted, onLeft }) {
+export function LeagueView({ token, userId, league, onBack, onUpdated, onDeleted, onLeft }) {
   const [predictions, setPredictions] = useState([])
   const [leaderboard, setLeaderboard] = useState([])
   const [details, setDetails] = useState({})

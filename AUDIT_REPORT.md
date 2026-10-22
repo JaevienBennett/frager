@@ -120,7 +120,11 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 - WS connection manager is in-process (single-instance hosting assumed).
 - No debouncing / list virtualization (fine at current scale).
 - No frontend test infrastructure (the frontend is only covered by `npm run build`).
-  Scheduled as **M24** (Vitest + Testing Library, prompt in PROMPTS.md).
+  **Fixed in M24**: Vitest + Testing Library, 35 tests over the helpers, the API error
+  and 401-refresh path, the ownership-transfer UI and the websocket owner-badge update.
+  `npm audit` still reports 5 dev-only advisories (esbuild/vite dev server, vite-node,
+  tinypool); they are unreachable in the deployed app and fixing them needs a breaking
+  Vitest 5 / Vite 8 upgrade.
 - No password-change endpoint and no account-deletion endpoint.
 - Refresh tokens still live in `localStorage` (an httpOnly cookie would be safer against XSS).
 - Rate limit counters live in process memory, so a multi-instance deployment would count
@@ -247,9 +251,30 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 - `backend/tests/conftest.py`: an autouse fixture empties the in-memory limiter between
   tests, so one test cannot spend the budget of the next.
 
+### M24 — Frontend test infrastructure (Vitest) + first UI tests
+- `frontend/package.json`: Vitest + jsdom + Testing Library as **devDependencies only**;
+  `npm test` (vitest run) and `npm run watch` scripts. `dependencies` untouched.
+- `frontend/vite.config.js`: a `test` block (jsdom, globals, setup file) on the existing
+  config — no second config file.
+- `frontend/src/test/setup.js`: fetches are globally mocked and an unmatched call fails
+  the test; a fake `WebSocket` lets a test push a server frame into the app.
+- `frontend/src/lib/api.js` + `frontend/src/lib/format.js`: the HTTP/session helpers and
+  `parseStake` / `pickErrorMessage` / `findMyPick` moved out of `App.jsx` **verbatim**
+  and exported. `Leagues` and `LeagueView` are now exported for direct rendering.
+- `frontend/src/lib/format.test.js` (13), `frontend/src/lib/api.test.js` (11),
+  `frontend/src/LeagueView.test.jsx` (8), `frontend/src/App.test.jsx` (3).
+- The production bundle is byte-identical to the pre-M24 build
+  (`index-Bwraoy5S.js`, 166.77 kB / gzip 52.80 kB), which proves the refactor changed no
+  behaviour.
+
 ### Verification
 - `python3 -m pytest tests -q` (from `backend/`, against a scratch PostgreSQL 16 instance)
   → **92 passed** (61 after M20 + 15 M21 + 6 M22 + 10 M23). Neon was not touched.
+- `npm test` (in `frontend/`) → **35 passed** (4 files, ~1.2s, no warnings).
+- Mutation check on the new frontend tests: breaking the owner-badge condition fails 2
+  tests; posting the wrong owner id fails the transfer test with
+  "expected { new_owner_id: +0 } to deeply equal { new_owner_id: 2 }". The tests are not
+  vacuous.
 - Production check after the M21–M23 deploy (`da5f2b2` backend, `bccc4b8` frontend):
   - Login for one account with a fresh `X-Forwarded-For` on every request → **429 on the
     11th attempt**. Before the fix the same trick produced no throttle at all.

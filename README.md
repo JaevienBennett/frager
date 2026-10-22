@@ -115,6 +115,8 @@ python -m pytest tests         # 92 tests: smoke flows, auto-resolve, validation
 
 ```bash
 cd frontend
+npm install                      # once: includes the test tooling
+npm test                         # 35 tests: helpers, API error/retry, transfer UI, auth screen
 npm run build                   # production build
 ```
 
