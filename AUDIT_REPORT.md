@@ -249,6 +249,17 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 ### Verification
 - `python3 -m pytest tests -q` (from `backend/`, against a scratch PostgreSQL 16 instance)
   → **92 passed** (61 after M20 + 15 M21 + 6 M22 + 10 M23). Neon was not touched.
+- Production check after the M21–M23 deploy (`da5f2b2` backend, `bccc4b8` frontend):
+  - Login for one account with a fresh `X-Forwarded-For` on every request → **429 on the
+    11th attempt**. Before the fix the same trick produced no throttle at all.
+  - A request that carries its own `CF-Connecting-IP` is refused by **Cloudflare** with a
+    403 before it reaches the app, so the header the limiter trusts most cannot be forged.
+  - Websocket live updates on the deployed backend: `prediction_created`, `pick_updated`,
+    `leaderboard_updated` and `prediction_resolved` all arrived on an open socket.
+  - Ownership transfer on the deployed backend: join → members → transfer → badge follows →
+    non-owner refused (403) → former owner leaves (200) → new owner cannot leave (409) →
+    new owner deletes the league (200). 12/12 checks passed.
+  - The throwaway probe accounts were deleted from Neon afterwards (5 rows, 0 left).
 - `npm run build` (in `frontend/`) → **build succeeded**.
 - `python3 -c "import app.main"` → imports cleanly.
 - Live check against a local uvicorn with `FORWARDED_ALLOW_IPS=*` (the Render setting): a

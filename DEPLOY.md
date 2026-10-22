@@ -115,6 +115,14 @@ The API sits behind Cloudflare → Render → uvicorn.
 - After deploying, verify with two probes: repeated logins for one account must return
   `429` on the 11th attempt even when `X-Forwarded-For` changes every time.
 
+Checked on the deployed service:
+
+- A login with a fresh `X-Forwarded-For` on every request → `429` on the 11th attempt.
+- A request that sends its own `CF-Connecting-IP` is refused by Cloudflare with `403`
+  before it reaches Render, so that header cannot be forged from the outside.
+- The websocket sends `prediction_created`, `pick_updated`, `leaderboard_updated` and
+  `prediction_resolved` to an open socket after the matching HTTP call.
+
 ## Local development (unchanged)
 
 No env files needed locally:
