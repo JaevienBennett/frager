@@ -89,14 +89,14 @@ def signup(
 ):
     existing = db.query(User).filter(User.email == body.email).first()
     if existing is not None:
-        rate_limit.note_failed_attempt(body.email, kind="signup")
+        rate_limit.note_failed_attempt(request, body.email, kind="signup")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email already registered",
         )
     existing = db.query(User).filter(User.nickname == body.nickname).first()
     if existing is not None:
-        rate_limit.note_failed_attempt(body.email, kind="signup")
+        rate_limit.note_failed_attempt(request, body.email, kind="signup")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Nickname already taken",
@@ -113,17 +113,20 @@ def signup(
 
 
 @router.post("/login", response_model=Token)
-@rate_limit.limiter.limit("10/minute")
 def login(
     request: Request,
     body: Credentials,
     db: Session = Depends(get_db),
 ):
+    # There is no request-count limit on this endpoint: it would count correct
+    # logins too, and ten logins a minute from a shared address would lock
+    # that address out. The address and the account are limited by the number
+    # of *failures* instead - see rate_limit.note_failed_attempt.
     user = db.query(User).filter(User.email == body.email).first()
     if user is None or not verify_password(body.password, user.password_hash):
-        # Only failures are charged to the account, so a correct password is
-        # never refused: nobody can lock a known account out of signing in.
-        rate_limit.note_failed_attempt(body.email)
+        # Only failures are charged, so a correct password is never refused:
+        # nobody can lock a known account out of signing in.
+        rate_limit.note_failed_attempt(request, body.email)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",

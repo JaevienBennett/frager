@@ -291,9 +291,16 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 - *MAJOR 2* — the per-account login limit counted **every** attempt, so ten successful
   logins locked a legitimate user out of their own account (a shared address, a mistyped
   password, a bot guessing one account). The limit now counts only *failures*:
-  `rate_limit.note_failed_attempt(email, kind)` spends a budget of 10 login / 5 signup
-  failures a minute, a correct password always gets in, and an unknown email is charged
-  exactly like a known one (no account-enumeration side channel).
+  `rate_limit.note_failed_attempt(request, email, kind)` spends a budget of 10 login /
+  5 signup failures a minute, a correct password always gets in, and an unknown email is
+  charged exactly like a known one (no account-enumeration side channel). The same
+  lockout existed one layer down — a request-count limit per address — and a production
+  probe caught it: eleven wrong passwords from one address also refused the *correct*
+  password that followed, because Render appends the real client address to
+  `X-Forwarded-For` and every request from one machine shares that bucket. Login
+  therefore has no request-count limit at all: the address is limited by failures too
+  (10 a minute), which keeps the anti-stuffing strength — one machine cannot try a
+  hundred accounts ten times each — without ever refusing a correct password.
 - *MINOR 3* — a websocket that timed out or errored on send was left in the manager;
   `ws.py` now drops it.
 - *MINOR 4* — leaving a league and transferring it at the same time could leave the league
@@ -317,8 +324,8 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
 
 ### Verification
 - `python3 -m pytest tests -q` (from `backend/`, against a scratch PostgreSQL 16 instance)
-  → **121 passed** (92 after M24 + 4 M21 races + 19 M25 account + 3 M25 migration +
-  2 M22 + 1 M23). Neon was not touched.
+  → **123 passed** (92 after M24 + 4 M21 races + 19 M25 account + 3 M25 migration +
+  2 M22 + 3 M23). Neon was not touched.
 - `npm test` (in `frontend/`) → **46 passed** (5 files, ~1.5s, no warnings).
 - Mutation check on the new frontend tests: breaking the owner-badge condition fails 2
   tests; posting the wrong owner id fails the transfer test with

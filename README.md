@@ -193,14 +193,15 @@ other users — only nicknames.
 
 ## Notes
 
-- **Rate limits:** `POST /api/auth/signup` allows 5/minute, `POST /api/auth/login`
-  10/minute, `POST /api/auth/refresh` 60/minute, and the logout endpoints 30/minute;
-  exceeding any returns `429`. Signup and login are limited **per address** and, on top of
-  that, failures are counted **per account** (10 login / 5 signup failures a minute).
-  Only failures count, so a correct password always gets in — the account can never be
-  locked out by someone else — and an address that fails 10 times a minute is capped even
-  with forged forwarding headers. The write endpoints (create/join/rename/delete/leave/
-  transfer, create/pick/resolve) are limited per signed-in user.
+- **Rate limits:** `POST /api/auth/signup` allows 5/minute per address,
+  `POST /api/auth/refresh` 60/minute, and the logout endpoints 30/minute; exceeding any
+  returns `429`. **Login has no request-count limit at all** — it has two *failure*
+  budgets instead: 10 failures a minute **per account** (so one attacker cannot keep
+  guessing one account) and 10 failures a minute **per address** (so one machine cannot
+  try a hundred accounts ten times each). Only failures count, so a correct password is
+  never refused: neither a known account nor a shared office address can be locked out
+  of signing in. The write endpoints (create/join/rename/delete/leave/transfer,
+  create/pick/resolve) are limited per signed-in user.
 - **Sessions:** access tokens last `ACCESS_TOKEN_EXPIRE_MINUTES` (default 60); refresh tokens
   last `REFRESH_TOKEN_EXPIRE_DAYS` (default 30), are stored only as SHA-256 hashes, and rotate
   on every use. Replaying a rotated token after a 15-second grace window revokes every

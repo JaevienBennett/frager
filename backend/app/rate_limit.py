@@ -13,9 +13,13 @@ Two kinds of key are used instead:
 ``user_key``    the signed-in user (the subject of the access token).
 
 Credentials get a third, softer budget in ``note_failed_attempt``. It is keyed
-on the account being tried and only counts *failures*, so a correct password is
-never refused. That matters: a limit that counts successes can be turned into
-a lockout by anybody who knows an email address.
+on the account being tried *and* on the address the attempt came from, and it
+only counts *failures*, so a correct password is never refused. That matters: a
+limit that counts successes can be turned into a lockout by anybody who knows
+an email address - and it is not only the account that has to be protected. The
+address budget is what stops one machine from trying one hundred accounts ten
+times each, and it counts failures for the same reason: ten correct logins
+from a shared office address must not lock the office out.
 """
 
 from __future__ import annotations
@@ -73,26 +77,35 @@ def failed_attempt_key(email: str, kind: str = "login") -> str:
     return f"failed-{kind}:{email.strip().lower()}"
 
 
-def note_failed_attempt(email: str, kind: str = "login") -> None:
-    """Charge one failed attempt to the account and refuse it when spent.
+def failed_address_key(address: str, kind: str = "login") -> str:
+    """Key on the address the failing attempts came from."""
+    return f"failed-address-{kind}:{address}"
+
+
+def note_failed_attempt(request: Request, email: str, kind: str = "login") -> None:
+    """Charge one failed attempt to the account and to the address.
 
     Only failures are charged. A correct password is never blocked, so nobody
-    can lock a known account out of signing in by guessing at it; this is the
-    defence against credential stuffing that a plain per-account request
-    counter used to provide.
+    can lock a known account out of signing in by guessing at it, and a busy
+    address (an office, a school, a phone carrier) cannot be locked out
+    either - this is the defence against credential stuffing that a plain
+    per-account request counter used to provide.
 
     Every address is charged the same way, including addresses that have no
     account, so the answer does not reveal whether an account exists.
     """
     limit = SIGNUP_ATTEMPT_LIMIT if kind == "signup" else FAILED_ATTEMPT_LIMIT
-    count = limiter._storage.incr(
-        failed_attempt_key(email, kind), FAILED_ATTEMPT_WINDOW_SECONDS
+    keys = (
+        failed_attempt_key(email, kind),
+        failed_address_key(client_ip(request), kind),
     )
-    if count > limit:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many requests. Try again later.",
-        )
+    for key in keys:
+        count = limiter._storage.incr(key, FAILED_ATTEMPT_WINDOW_SECONDS)
+        if count > limit:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Try again later.",
+            )
 
 
 def user_key(request: Request) -> str:

@@ -115,9 +115,12 @@ The API sits behind Cloudflare → Render → uvicorn.
   `request.client.host`.
 - Limits key on the signed-in user (JWT subject); the caller's address is only used as a
   secondary layer and is taken from `CF-Connecting-IP` (which Cloudflare overwrites) or
-  from the last `X-Forwarded-For` entry (which Render appends). Login and signup add a
-  **per-account failure budget** (10 login / 5 signup failures a minute) on top of the
-  per-address limit. Only failures count, so a correct password always gets in.
+  from the last `X-Forwarded-For` entry (which Render appends). **Login has no
+  request-count limit**: it has failure budgets instead — 10 failures a minute per
+  account *and* 10 failures a minute per address. A correct password is therefore never
+  refused, while one machine still cannot hammer many accounts. (This was found by a
+  production probe: with a request-count limit, eleven wrong passwords from one address
+  also refused the *correct* password that followed.)
 - The counters live in process memory, so they are per instance. Render currently runs a
   single instance; scaling out would need a shared store (Redis).
 - After deploying, verify with two probes: repeated *failed* logins for one account must

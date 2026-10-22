@@ -34,9 +34,11 @@ BACKEND
      user owns a league that still has other members
    - on success: lock the user row FOR UPDATE, void the user's OPEN predictions, delete
      their picks, delete the user, close their websockets, return {"ok": true}
-3. The rate limit must count only FAILURES: rate_limit.note_failed_attempt(email, kind)
-   spends a per-account budget of 10 login / 5 signup failures a minute. A correct
-   password always gets in. account_key() and stash_account_email() are removed.
+3. The rate limit must count only FAILURES: rate_limit.note_failed_attempt(request,
+   email, kind) spends a per-account budget of 10 login / 5 signup failures a minute AND
+   a per-address budget. Login has no request-count limit at all - a correct password is
+   never refused, and one machine still cannot try a hundred accounts. account_key() and
+   stash_account_email() are removed.
 4. predictions.creator_id becomes nullable with ON DELETE SET NULL, so a prediction
    survives its creator's account (other members' picks keep counting) and nobody owns
    it any more - nobody can resolve it. Needs an idempotent migration

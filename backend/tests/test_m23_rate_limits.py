@@ -234,6 +234,55 @@ def test_the_failure_budget_does_not_reveal_whether_an_account_exists():
     assert real.status_code == made_up.status_code == 429, (real.text, made_up.text)
 
 
+def test_one_address_cannot_hammer_many_accounts():
+    """The address budget caps failures even when the target keeps changing.
+
+    This is the credential-stuffing shape: one machine, many accounts. The
+    account budget cannot see it (every account is fresh), so the address
+    budget has to.
+    """
+    client = _proxied_client()
+
+    codes = []
+    for i in range(12):
+        r = client.post(
+            "/api/auth/login",
+            json={"email": f"nobody-{i}@example.com", "password": "wrong-password"},
+            headers={"X-Forwarded-For": f"10.0.0.{i}, 203.0.113.7"},
+        )
+        codes.append(r.status_code)
+
+    assert codes[:10] == [401] * 10, codes
+    assert codes[10] == 429, codes
+
+
+def test_a_correct_login_is_never_blocked_by_failures_from_the_same_address():
+    """The production shape: one address, eleven wrong passwords, then a right one.
+
+    The proxy chain appends the address it saw to ``X-Forwarded-For``, so
+    every request from one machine lands in the same address bucket whatever
+    the caller writes in the header. A shared address (an office, a school, a
+    phone carrier) must still be able to log in.
+    """
+    _, email, _ = _make_user()
+    client = _proxied_client()
+
+    for i in range(12):
+        r = client.post(
+            "/api/auth/login",
+            json={"email": email, "password": "wrong-password"},
+            headers={"X-Forwarded-For": f"10.0.0.{i}, 203.0.113.7"},
+        )
+        assert r.status_code in (401, 429), r.text
+
+    r = client.post(
+        "/api/auth/login",
+        json={"email": email, "password": "pass123456"},
+        headers={"X-Forwarded-For": "10.0.0.99, 203.0.113.7"},
+    )
+    assert r.status_code == 200, r.text
+
+
 # --------------------------------------------------------------------------
 # write endpoints: the user is what counts
 # --------------------------------------------------------------------------

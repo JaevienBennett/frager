@@ -46,12 +46,13 @@ This file is the short version: the rules that are easy to break by accident.
   was bypassable. Use `user_key()` (JWT subject) and `client_ip()`
   (`backend/app/rate_limit.py`) — and note that `client_ip()` reads the *last*
   `X-Forwarded-For` entry, not the first.
-- **Do not rate-limit login/signup on the account key.** Counting *every* attempt per
-  email locks a legitimate user out (a shared address, a mistyped password, a bot
-  guessing one account). `rate_limit.note_failed_attempt(email, kind)` counts only
-  *failures* against a per-account budget (10 login / 5 signup a minute); a correct
-  password always gets in. `account_key()` and `stash_account_email()` were removed in
-  M25 — do not reintroduce them.
+- **Do not rate-limit login on a request count.** Counting *every* attempt locks a
+  legitimate user out — of their account, or of their whole address (a shared office IP).
+  `rate_limit.note_failed_attempt(request, email, kind)` counts only *failures*, against
+  a per-account budget (10 login / 5 signup a minute) **and** a per-address budget, so a
+  correct password is never refused while one machine still cannot try a hundred
+  accounts. `account_key()` and `stash_account_email()` were removed in M25 — do not
+  reintroduce them.
 - **slowapi details:** a per-limit `key_func` receives the request only if the endpoint
   parameter is literally named `request`; FastAPI resolves dependencies before the limit
   check, so `request.state.email` is available by then.
@@ -68,7 +69,7 @@ This file is the short version: the rules that are easy to break by accident.
 ## Commands
 
 ```bash
-# backend tests (121) - needs a scratch PostgreSQL, never production
+# backend tests (123) - needs a scratch PostgreSQL, never production
 cd backend && DATABASE_URL='postgresql+psycopg2://postgres@localhost:55432/frager' python3 -m pytest tests -q
 
 # frontend tests (46) and build
