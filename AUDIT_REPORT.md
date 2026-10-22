@@ -342,6 +342,35 @@ Stack: FastAPI + SQLAlchemy + PostgreSQL (Neon), React + Vite, JWT auth (bcrypt 
     non-owner refused (403) → former owner leaves (200) → new owner cannot leave (409) →
     new owner deletes the league (200). 12/12 checks passed.
   - The throwaway probe accounts were deleted from Neon afterwards (5 rows, 0 left).
+- Production check after the M25 deploy (migration `migrate_v25_creator_set_null` on
+  Neon → 2 changes, then 0 on a repeat run; backend `f51589b` + `3316bfc`; frontend
+  `c6ddd48`), with throwaway probe accounts that were deleted afterwards:
+  - **The first probe failed and found a real bug.** Eleven wrong passwords from one
+    address also refused the *correct* password that followed — the per-address limit
+    counted requests, not failures, and in production Render appends the real client
+    address to `X-Forwarded-For`, so every request from one machine shares that bucket.
+    Fixed in `3316bfc`: login has no request-count limit, the address is limited by
+    failures too (10 a minute), so a correct password is never refused and one machine
+    still cannot hammer many accounts. Re-probed: 12 wrong passwords → 10 × `401` then
+    `429`, and the correct password right after → `200`.
+  - An unknown email is refused exactly like a known one (`429` after 10 failures) — no
+    account-enumeration side channel.
+  - `change-password`: wrong current password → `400`, the same password → `400`, the
+    new one → `200` with a fresh token pair, the old access token → `401`, the old
+    refresh token → `401` (revoked), the new access token → `200`.
+  - `delete-account`: wrong password → `400`; owning a league with other members →
+    `409`; after transferring it → `200 {"ok": true}` and the account is gone (`401` on
+    `/api/auth/me`).
+  - The void policy on real data: the open prediction of the deleted user survives with
+    `creator_id = null` and `status = "void"`, the deleted user's pick is gone, the
+    other member's pick stays, and the void prediction moves nobody's points. The
+    settled prediction survives with `creator_id = null` and the other member keeps
+    their `-5`. The sole-member league is deleted with the account; the league with
+    other members stays.
+  - Neon after the probes: 10 users, 1 league, 1 prediction — exactly the state before
+    them. No probe rows left.
+  - The deployed frontend bundle (`index-CBGrzwN5.js`, CSS `index--jAXk-oW.css`) is the
+    one built locally, and it contains the account view and the void badge.
 - `npm run build` (in `frontend/`) → **build succeeded**.
 - `python3 -c "import app.main"` → imports cleanly.
 - Live check against a local uvicorn with `FORWARDED_ALLOW_IPS=*` (the Render setting): a
