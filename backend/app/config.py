@@ -21,8 +21,10 @@ CORS_ORIGINS = [
 # When the refresh token only ever travels in an httpOnly cookie, no client
 # can read it and no script can steal it. The switch is a setting rather than
 # a code change so a rollout can be reversed without a deploy; the code
-# default is turned on once every client has moved over.
-REFRESH_COOKIE_ONLY = os.getenv("REFRESH_COOKIE_ONLY", "false").strip().lower() in (
+# default was turned on in step 3 of the M26 rollout, once every client had
+# moved over. REFRESH_COOKIE_ONLY=false puts the body token back for one
+# deploy if a client cannot be updated.
+REFRESH_COOKIE_ONLY = os.getenv("REFRESH_COOKIE_ONLY", "true").strip().lower() in (
     "1",
     "true",
     "yes",

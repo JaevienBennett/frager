@@ -18,6 +18,7 @@ import pytest
 from fastapi import Request, Response
 from fastapi.testclient import TestClient
 
+from app import routes_auth
 from app.config import REFRESH_COOKIE_ONLY
 from app.database import SessionLocal
 from app.main import app
@@ -174,14 +175,21 @@ def test_the_session_responses_are_never_cached(client, db_session):
 def test_the_refresh_token_leaves_the_response_body_once_the_cookie_owns_it(
     client, db_session
 ):
+    """The cookie owns the refresh token now, so the body does not carry it."""
+    assert REFRESH_COOKIE_ONLY, "the rollout is not finished yet"
+    _, r = _signup(client, db_session)
+    assert r.json()["refresh_token"] is None
+
+
+def test_the_body_token_is_still_handed_out_while_the_rollout_is_running(
+    client, db_session, monkeypatch
+):
+    """Step 1 of the rollout: the body token and the cookie are the same token,
+    so a client that only knows one of them still works."""
+    monkeypatch.setattr(routes_auth, "REFRESH_COOKIE_ONLY", False)
     _, r = _signup(client, db_session)
     body = r.json()
-    if REFRESH_COOKIE_ONLY:
-        assert body["refresh_token"] is None
-    else:
-        # the rollout is still running: the body token and the cookie are the
-        # same token, so a client that only knows one of them still works
-        assert body["refresh_token"] == _cookie(client)
+    assert body["refresh_token"] == _cookie(client)
 
 
 # --------------------------------------------------------------------------
@@ -216,10 +224,8 @@ def test_a_refresh_without_a_cookie_and_without_a_body_is_rejected(client):
     assert r.json()["detail"] == "Invalid refresh token"
 
 
-def test_the_body_token_is_only_accepted_while_the_rollout_is_running(
-    client, db_session
-):
-    """The old clients send the token in the body. That door closes in step 3."""
+def _raw_refresh_token(db_session) -> str:
+    """A refresh token that only exists in the database."""
     session, created = db_session
     user = _make_user(session, created)
     raw = f"m26-raw-{uuid.uuid4().hex}"
@@ -231,13 +237,27 @@ def test_the_body_token_is_only_accepted_while_the_rollout_is_running(
         )
     )
     session.commit()
+    return raw
 
+
+def test_the_body_token_is_refused_once_the_rollout_is_over(
+    client, db_session
+):
+    """The old clients send the token in the body. That door is closed now."""
+    raw = _raw_refresh_token(db_session)
     r = client.post("/api/auth/refresh", json={"refresh_token": raw})
-    if REFRESH_COOKIE_ONLY:
-        assert r.status_code == 401, r.text
-        assert r.json()["detail"] == "Invalid refresh token"
-    else:
-        assert r.status_code == 200, r.text
+    assert r.status_code == 401, r.text
+    assert r.json()["detail"] == "Invalid refresh token"
+
+
+def test_the_body_token_is_accepted_while_the_rollout_is_running(
+    client, db_session, monkeypatch
+):
+    """During the rollout the body token still opens the door."""
+    monkeypatch.setattr(routes_auth, "REFRESH_COOKIE_ONLY", False)
+    raw = _raw_refresh_token(db_session)
+    r = client.post("/api/auth/refresh", json={"refresh_token": raw})
+    assert r.status_code == 200, r.text
 
 
 # --------------------------------------------------------------------------
